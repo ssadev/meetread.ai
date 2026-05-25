@@ -1,0 +1,17 @@
+services:
+  meet-bot:
+    build: .
+    platform: linux/amd64
+    env_file:
+      - path: .env.docker
+        required: false
+    environment:
+      GOOGLE_CREDENTIALS_PATH: /app/secrets/credentials.json
+      GOOGLE_TOKEN_PATH: /app/secrets/token.json
+    shm_size: "2gb"
+    volumes:
+      - ./meetings:/app/meetings
+      - ./state:/app/state
+      - ./credentials.json:/app/secrets/credentials.json:ro
+      - ./token.json:/app/secrets/token.json
+    restart: unless-stopped

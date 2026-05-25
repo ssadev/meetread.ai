@@ -1,0 +1,107 @@
+# -----------------------------------------------------------------------------
+# Local secrets and environment files
+# -----------------------------------------------------------------------------
+.env
+.env.*
+!.env.example
+!.env.*.example
+
+credentials.json
+token.json
+client_secret*.json
+service-account*.json
+bot_session.pkl
+*.pem
+*.key
+*.p12
+
+# -----------------------------------------------------------------------------
+# Meeting outputs and runtime state
+# -----------------------------------------------------------------------------
+meetings/
+state/
+audio_chunks/
+seen_meetings.json
+chrome-bot-profile/
+chrome-profile/
+user-data-dir/
+
+*.wav
+*.mp3
+*.m4a
+*.flac
+*.webm
+*.mp4
+*.mov
+*.mkv
+
+# Keep generated meeting debug files out of git if copied outside meetings/.
+meet_*.html
+meet_*.png
+google_signin_*.html
+google_signin_*.png
+transcript_live.json
+transcript_final.json
+transcript_final.txt
+metadata.json
+bot.log
+
+# -----------------------------------------------------------------------------
+# Python
+# -----------------------------------------------------------------------------
+__pycache__/
+*.py[cod]
+*$py.class
+.python-version
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.pyre/
+.coverage
+.coverage.*
+coverage.xml
+htmlcov/
+dist/
+build/
+*.egg-info/
+.eggs/
+pip-wheel-metadata/
+
+# Virtual environments
+venv/
+.venv/
+env/
+.envrc
+
+# -----------------------------------------------------------------------------
+# Docker and local process artifacts
+# -----------------------------------------------------------------------------
+*.pid
+*.sock
+*.log
+docker-compose.override.yml
+
+# -----------------------------------------------------------------------------
+# Editor, OS, and tool caches
+# -----------------------------------------------------------------------------
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+.claude/
+
+# -----------------------------------------------------------------------------
+# Node/tooling caches, in case UI or tooling is added later
+# -----------------------------------------------------------------------------
+node_modules/
+.npm/
+.pnpm-store/
+.yarn/
+.turbo/
+.next/
+.vite/
+playwright-report/
+test-results/
