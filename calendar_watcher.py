@@ -41,7 +41,11 @@ class CalendarWatcher:
 
     def poll_once(self, now: datetime | None = None) -> list[CalendarMeeting]:
         now = now or datetime.now(timezone.utc)
-        horizon = now + timedelta(minutes=self.settings.join_buffer_minutes)
+        lookahead_seconds = max(
+            self.settings.join_buffer_minutes * 60,
+            self.settings.poll_interval_seconds + 5,
+        )
+        horizon = now + timedelta(seconds=lookahead_seconds)
         events = self._fetch_events(now, horizon)
         meetings: list[CalendarMeeting] = []
         for event in events:

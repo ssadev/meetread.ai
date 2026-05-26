@@ -10,6 +10,12 @@ from typing import Any
 
 from storage import MeetingStorage
 
+try:
+    from selenium.common.exceptions import StaleElementReferenceException
+except Exception:  # pragma: no cover - selenium may be absent in lightweight test envs
+    class StaleElementReferenceException(Exception):
+        pass
+
 
 LOGGER = logging.getLogger(__name__)
 
@@ -35,6 +41,7 @@ class CaptionScraper:
         self._buffer_speaker = ""
         self._buffer_text = ""
         self._meeting_start_time: datetime | None = None
+        self._stale_dom_polls = 0
 
     def start(self, driver: Any, output_dir: str | Path, stop_event: threading.Event, meeting_start_time: datetime) -> None:
         self._meeting_start_time = meeting_start_time
@@ -65,12 +72,17 @@ class CaptionScraper:
 
     def scrape_current_caption(self, driver: Any) -> tuple[str, str] | None:
         for selector in CAPTION_CONTAINER_SELECTORS:
-            containers = _find_elements(driver, selector)
-            visible_containers = [item for item in containers if _is_displayed(item)]
-            if not visible_containers:
+            try:
+                containers = _find_elements(driver, selector)
+                visible_containers = [item for item in containers if _is_displayed(item)]
+                if not visible_containers:
+                    continue
+                container = visible_containers[-1]
+                speaker, text = self._extract_caption_parts(container)
+            except StaleElementReferenceException:
+                self._stale_dom_polls += 1
+                LOGGER.debug("Google Meet caption DOM went stale during poll; retrying next poll")
                 continue
-            container = visible_containers[-1]
-            speaker, text = self._extract_caption_parts(container)
             if text:
                 if self._last_selector != selector:
                     LOGGER.info("Google Meet caption selector active: %s", selector)
@@ -132,6 +144,7 @@ class CaptionScraper:
             "lines_captured": len(self.get_lines()),
             "last_speaker": self._last_speaker,
             "last_selector": self._last_selector,
+            "stale_dom_polls": self._stale_dom_polls,
             "errors": list(self._errors),
         }
 

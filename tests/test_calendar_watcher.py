@@ -6,7 +6,7 @@ from tempfile import TemporaryDirectory
 import unittest
 
 from calendar_watcher import CalendarWatcher, extract_meet_url
-from config import get_settings
+from config import Settings, get_settings
 
 
 class _Events:
@@ -67,3 +67,23 @@ class CalendarWatcherTests(unittest.TestCase):
             self.assertEqual(meetings[0].attendees, ["bob@example.com"])
             self.assertNotIn("conferenceDataVersion", watcher.service.events().kwargs)
             self.assertEqual(watcher.poll_once(now), [])
+
+    def test_poll_once_lookahead_covers_full_poll_interval(self):
+        with TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            now = datetime(2026, 5, 23, 10, 0, tzinfo=timezone.utc)
+            base = get_settings(tmp_path / "missing.env")
+            settings = Settings(
+                **{
+                    **base.__dict__,
+                    "poll_interval_seconds": 300,
+                    "join_buffer_minutes": 2,
+                }
+            )
+            service = _Service([_event("evt-2", now + timedelta(minutes=4))])
+            watcher = CalendarWatcher(service, settings=settings, seen_path=tmp_path / "seen.json")
+
+            meetings = watcher.poll_once(now)
+
+            self.assertEqual(len(meetings), 1)
+            self.assertEqual(meetings[0].calendar_event_id, "evt-2")

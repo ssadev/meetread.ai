@@ -3,7 +3,7 @@ from __future__ import annotations
 from datetime import datetime, timedelta, timezone
 import unittest
 
-from caption_scraper import CaptionScraper
+from caption_scraper import CaptionScraper, StaleElementReferenceException
 
 
 class FakeElement:
@@ -16,6 +16,11 @@ class FakeElement:
 
     def is_displayed(self):
         return True
+
+
+class StaleCaptionElement(FakeElement):
+    def find_elements(self, by, selector=None):
+        raise StaleElementReferenceException("stale")
 
 
 class CaptionScraperTests(unittest.TestCase):
@@ -64,6 +69,14 @@ class CaptionScraperTests(unittest.TestCase):
 
         self.assertEqual(scraper.scrape_current_caption(driver), ("Alice", "hello"))
         self.assertEqual(scraper.get_status()["last_selector"], 'div[jsname="tgaKEf"]')
+
+    def test_scrape_current_caption_treats_stale_dom_as_transient(self):
+        driver = FakeElement(children={'div[jsname="tgaKEf"]': [StaleCaptionElement("old caption")]})
+        scraper = CaptionScraper()
+
+        self.assertIsNone(scraper.scrape_current_caption(driver))
+        self.assertEqual(scraper.get_status()["stale_dom_polls"], 1)
+        self.assertEqual(scraper.get_status()["errors"], [])
 
     def test_scrape_current_caption_splits_embedded_speaker_name(self):
         caption = FakeElement(text="Sarfaraz Ahamed\nVideo. And then any two foreign ministers")
