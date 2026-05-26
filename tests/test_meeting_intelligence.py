@@ -378,6 +378,84 @@ class MeetingIntelligenceTests(unittest.TestCase):
 
         self.assertEqual(json.loads(response)["summary"], "Reasoning JSON")
 
+    def test_reasoning_effort_included_when_set(self):
+        captured = {}
+
+        class FakeResponse:
+            def __enter__(self):
+                return self
+
+            def __exit__(self, exc_type, exc, traceback):
+                return False
+
+            def read(self):
+                return json.dumps({"choices": [{"message": {"content": "{}"}}]}).encode()
+
+        def fake_urlopen(request, timeout):
+            captured["body"] = json.loads(request.data.decode())
+            return FakeResponse()
+
+        with patch("meeting_intelligence.urllib.request.urlopen", fake_urlopen):
+            _openai_compatible_chat(
+                [{"role": "user", "content": "hi"}],
+                LLMSettings(provider="sarvam", reasoning_effort="high"),
+            )
+
+        self.assertEqual(captured["body"]["reasoning_effort"], "high")
+
+    def test_reasoning_effort_omitted_when_not_set(self):
+        captured = {}
+
+        class FakeResponse:
+            def __enter__(self):
+                return self
+
+            def __exit__(self, exc_type, exc, traceback):
+                return False
+
+            def read(self):
+                return json.dumps({"choices": [{"message": {"content": "{}"}}]}).encode()
+
+        def fake_urlopen(request, timeout):
+            captured["body"] = json.loads(request.data.decode())
+            return FakeResponse()
+
+        with patch("meeting_intelligence.urllib.request.urlopen", fake_urlopen):
+            _openai_compatible_chat([{"role": "user", "content": "hi"}], LLMSettings())
+
+        self.assertNotIn("reasoning_effort", captured["body"])
+
+    def test_sarvam_provider_routes_through_openai_compatible_chat(self):
+        captured = {}
+
+        class FakeResponse:
+            def __enter__(self):
+                return self
+
+            def __exit__(self, exc_type, exc, traceback):
+                return False
+
+            def read(self):
+                return json.dumps({"choices": [{"message": {"content": "{}"}}]}).encode()
+
+        def fake_urlopen(request, timeout):
+            captured["url"] = request.full_url
+            captured["auth"] = request.get_header("Authorization")
+            return FakeResponse()
+
+        with patch("meeting_intelligence.urllib.request.urlopen", fake_urlopen):
+            _openai_compatible_chat(
+                [{"role": "user", "content": "hello"}],
+                LLMSettings(provider="sarvam", base_url="https://api.sarvam.ai", api_key="test-key", model="sarvam-m"),
+            )
+
+        self.assertIn("api.sarvam.ai", captured["url"])
+        self.assertEqual(captured["auth"], "Bearer test-key")
+
+    def test_unknown_llm_provider_raises(self):
+        with self.assertRaises(ValueError):
+            _openai_compatible_chat([{"role": "user", "content": "hi"}], LLMSettings(provider="unknown_provider"))
+
 
 if __name__ == "__main__":
     unittest.main()
