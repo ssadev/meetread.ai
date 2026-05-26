@@ -247,86 +247,9 @@ Then run Chrome once with that profile and sign in manually:
 
 After the bot account is signed in, close that Chrome window and run `python main.py`. The bot will reuse the signed-in session and skip automated password entry. If automated sign-in gets stuck, the meeting folder will contain `google_signin_no_password.html` and `google_signin_no_password.png` for diagnosis.
 
-## Product Roadmap / TODO
+## Roadmap
 
-The project currently captures Google Meet audio and Meet-provided captions. To move closer to a Read.ai or Fireflies-style product replacement, the next improvements should focus on reliability, transcript quality, intelligence, collaboration workflows, and product operations.
-
-### Capture Reliability
-
-- [ ] Add a meeting state machine with explicit states such as `scheduled`, `joining`, `waiting_for_admission`, `recording`, `removed`, `ended`, `failed`, and `partial`.
-- [ ] Improve join diagnostics with structured screenshots, HTML snapshots, current URL, visible page text, and detected Meet state.
-- [ ] Add automatic recovery when caption DOM selectors change, including selector telemetry in `bot.log`.
-- [ ] Detect silent audio during recording and mark the meeting as `partial` if the audio stream is blank for too long.
-- [ ] Add configurable retry rules for temporary ChromeDriver, PulseAudio, or network failures.
-- [ ] Support concurrent meetings safely with isolated browser profiles, PulseAudio sinks, output folders, and logs.
-
-### Transcript Quality
-
-- [ ] Add optional Whisper or another speech-to-text backend as a fallback when Google Meet captions are disabled or unreliable.
-- [ ] Merge Meet captions and audio transcription into a single best transcript with timestamps and confidence metadata.
-- [ ] Improve speaker detection with participant roster scraping, caption speaker parsing, and optional voice diarization.
-- [ ] Add transcript cleanup to remove repeated incremental captions without losing live transcript updates.
-- [ ] Add punctuation, casing, paragraphing, and sentence boundary cleanup for final transcripts.
-- [ ] Add transcript search and filtering by speaker, timestamp, or keyword.
-
-### Meeting Intelligence
-
-- [x] Add a provider-neutral meeting intelligence interface with a local rule-based provider.
-- [x] Generate local meeting intelligence artifacts with summary, key points, decisions, risks, action items, questions, blockers, and topics.
-- [x] Add AI/LLM-generated summaries behind user-controlled provider settings.
-- [x] Support OpenAI-compatible hosted APIs and self-hosted/local providers such as Ollama through one provider path.
-- [ ] Add native provider adapters where OpenAI-compatible APIs are insufficient.
-- [ ] Extract richer action items with owner, due date, source timestamp, and confidence using LLM-backed providers.
-- [ ] Detect objections and unresolved topics with better semantic accuracy.
-- [ ] Improve topic segmentation so long meetings are grouped into readable sections.
-- [ ] Add meeting highlights with links back to audio/transcript timestamps.
-- [ ] Add optional summary style presets for sales calls, standups, interviews, support calls, and product meetings without requiring a static template for every meeting.
-
-### Integrations
-
-- [x] Push summaries and action items by email through SMTP.
-- [ ] Push summaries and action items to Slack, Notion, Confluence, Linear, Jira, or HubSpot.
-- [ ] Create calendar event follow-up notes automatically after the meeting ends.
-- [ ] Add webhook events for `meeting_started`, `meeting_completed`, `meeting_failed`, and `summary_ready`.
-- [ ] Store artifacts in S3, GCS, or another object store instead of only the local filesystem.
-- [ ] Add a REST API to query meetings, transcripts, summaries, and recordings.
-- [ ] Add user/team-level settings for retention, sharing, summary format, and integration targets.
-
-### Product Experience
-
-- [ ] Build a web dashboard to browse meetings, recordings, transcripts, summaries, and action items.
-- [ ] Add playback with transcript syncing and click-to-seek timestamps.
-- [ ] Add editable transcripts and human correction workflow.
-- [ ] Add shareable meeting pages with permissions.
-- [ ] Add organization, workspace, and team concepts.
-- [ ] Add notification preferences for meeting completion and summary delivery.
-
-### Security, Privacy, And Compliance
-
-- [ ] Add explicit retention settings for audio, transcripts, logs, and screenshots.
-- [ ] Add encryption-at-rest support for sensitive artifacts.
-- [ ] Redact secrets, personal data, and sensitive keywords from logs.
-- [ ] Add role-based access control for meeting artifacts.
-- [ ] Add audit logs for who accessed, edited, exported, or deleted meeting data.
-- [ ] Add consent and disclosure controls so meeting participants know the bot is recording.
-
-### Operations And Scale
-
-- [ ] Add structured JSON logs and metrics for join success rate, caption health, audio health, and processing time.
-- [ ] Add health checks for Chrome, PulseAudio, Calendar API, storage, and worker queues.
-- [ ] Move long-running post-processing into a job queue.
-- [ ] Add database storage for meetings, artifacts, speaker metadata, summaries, and integration status.
-- [ ] Add alerts for repeated join failures, blank recordings, missing transcripts, or expired credentials.
-- [ ] Add deployment docs for Docker Compose, Kubernetes, and systemd production setups.
-
-### Evaluation And Quality
-
-- [ ] Create fixture-based tests using saved Meet DOM samples for caption parsing.
-- [ ] Add audio validation tests that distinguish silence from real speech.
-- [ ] Add golden-file tests for transcript cleanup and summary generation.
-- [ ] Track transcript word error rate when using an STT backend.
-- [ ] Track summary quality with human review fields and regression examples.
-- [ ] Add end-to-end test meetings in a controlled Google Workspace test account.
+The product roadmap and TODO list live in [ROADMAP.md](ROADMAP.md).
 
 ## systemd Example
 
