@@ -40,6 +40,11 @@ def _float_env(name: str, default: float) -> float:
     return float(value)
 
 
+def _list_env(name: str) -> list[str]:
+    value = os.getenv(name, "")
+    return [item.strip() for item in value.split(",") if item.strip()]
+
+
 @dataclass(frozen=True)
 class Settings:
     google_credentials_path: Path
@@ -79,6 +84,17 @@ class Settings:
     meeting_llm_max_input_chars: int
     meeting_llm_response_format: str
     meeting_llm_fallback_provider: str
+    summary_email_enabled: bool
+    smtp_host: str
+    smtp_port: int
+    smtp_username: str
+    smtp_password: str
+    smtp_from: str
+    smtp_summary_recipients: list[str]
+    smtp_use_tls: bool
+    smtp_use_ssl: bool
+    smtp_timeout_seconds: int
+    smtp_subject_prefix: str
 
 
 def get_settings(env_path: str | Path = ".env") -> Settings:
@@ -122,6 +138,17 @@ def get_settings(env_path: str | Path = ".env") -> Settings:
         meeting_llm_max_input_chars=int(os.getenv("MEETING_LLM_MAX_INPUT_CHARS", "60000")),
         meeting_llm_response_format=os.getenv("MEETING_LLM_RESPONSE_FORMAT", "json_schema"),
         meeting_llm_fallback_provider=os.getenv("MEETING_LLM_FALLBACK_PROVIDER", "rule_based"),
+        summary_email_enabled=_bool_env("SUMMARY_EMAIL_ENABLED", False),
+        smtp_host=os.getenv("SMTP_HOST", ""),
+        smtp_port=int(os.getenv("SMTP_PORT", "587")),
+        smtp_username=os.getenv("SMTP_USERNAME", ""),
+        smtp_password=os.getenv("SMTP_PASSWORD", ""),
+        smtp_from=os.getenv("SMTP_FROM", ""),
+        smtp_summary_recipients=_list_env("SMTP_SUMMARY_RECIPIENTS"),
+        smtp_use_tls=_bool_env("SMTP_USE_TLS", True),
+        smtp_use_ssl=_bool_env("SMTP_USE_SSL", False),
+        smtp_timeout_seconds=int(os.getenv("SMTP_TIMEOUT_SECONDS", "30")),
+        smtp_subject_prefix=os.getenv("SMTP_SUBJECT_PREFIX", "[MeetRead]"),
     )
 
 

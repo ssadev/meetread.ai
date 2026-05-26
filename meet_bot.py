@@ -17,6 +17,7 @@ from uuid import uuid4
 from audio_recorder import AudioRecorder
 from caption_scraper import CaptionScraper
 from config import SETTINGS, Settings
+from email_delivery import send_summary_email_for_meeting
 from meeting_intelligence import create_meeting_intelligence_provider, render_intelligence_markdown
 from storage import MeetingStorage
 
@@ -602,8 +603,12 @@ class MeetBot:
         )
         if audio_status.get("mp3_file"):
             metadata["audio_mp3_file"] = audio_status["mp3_file"]
+        metadata.update(self._send_summary_email(meeting_dir, metadata))
         self.storage.write_metadata(meeting_dir, metadata)
         return metadata
+
+    def _send_summary_email(self, meeting_dir: Path, metadata: dict[str, Any]) -> dict[str, Any]:
+        return send_summary_email_for_meeting(meeting_dir, metadata, settings=self.settings)
 
     def _generate_meeting_intelligence(
         self,
