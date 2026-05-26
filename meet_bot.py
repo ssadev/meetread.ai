@@ -17,6 +17,7 @@ from uuid import uuid4
 from audio_recorder import AudioRecorder
 from caption_scraper import CaptionScraper
 from config import SETTINGS, Settings
+from meeting_intelligence import create_meeting_intelligence_provider, render_intelligence_markdown
 from storage import MeetingStorage
 
 
@@ -585,12 +586,14 @@ class MeetBot:
         leave_time = datetime.now(timezone.utc)
         lines = captions.get_lines()
         transcript_updates = self.storage.finalize_transcripts(meeting_dir, lines)
+        metadata.update(transcript_updates)
+        intelligence_updates = self._generate_meeting_intelligence(meeting_dir, lines, metadata)
         audio_status = audio.get_status()
         final_status = status
         if status == "completed" and (audio_status.get("errors") or not audio_status.get("audio_file")):
             final_status = "partial"
         metadata.update(
-            transcript_updates,
+            intelligence_updates,
             status=final_status,
             actual_leave_time=leave_time.isoformat(),
             duration_seconds=int((leave_time - joined_at).total_seconds()) if joined_at else 0,
@@ -601,6 +604,46 @@ class MeetBot:
             metadata["audio_mp3_file"] = audio_status["mp3_file"]
         self.storage.write_metadata(meeting_dir, metadata)
         return metadata
+
+    def _generate_meeting_intelligence(
+        self,
+        meeting_dir: Path,
+        lines: list[dict[str, Any]],
+        metadata: dict[str, Any],
+    ) -> dict[str, Any]:
+        if not getattr(self.settings, "meeting_intelligence_enabled", True):
+            return {"meeting_intelligence_status": "disabled"}
+        provider_name = getattr(self.settings, "meeting_intelligence_provider", "rule_based")
+        try:
+            provider = create_meeting_intelligence_provider(provider_name, settings=self.settings)
+            result = provider.analyze(lines, metadata)
+            markdown = render_intelligence_markdown(result)
+            updates = self.storage.write_meeting_intelligence(meeting_dir, result, markdown)
+            updates["meeting_intelligence_status"] = "completed"
+            return updates
+        except Exception as exc:
+            LOGGER.exception("Meeting intelligence generation failed")
+            fallback_provider_name = getattr(self.settings, "meeting_llm_fallback_provider", "")
+            if provider_name == "llm" and fallback_provider_name and fallback_provider_name != "llm":
+                try:
+                    fallback = create_meeting_intelligence_provider(fallback_provider_name, settings=self.settings)
+                    result = fallback.analyze(lines, metadata)
+                    result["fallback_reason"] = str(exc)
+                    markdown = render_intelligence_markdown(result)
+                    updates = self.storage.write_meeting_intelligence(meeting_dir, result, markdown)
+                    updates["meeting_intelligence_status"] = "completed_with_fallback"
+                    updates["meeting_intelligence_error"] = str(exc)
+                    return updates
+                except Exception as fallback_exc:
+                    LOGGER.exception("Fallback meeting intelligence generation failed")
+                    return {
+                        "meeting_intelligence_status": "failed",
+                        "meeting_intelligence_error": f"{exc}; fallback failed: {fallback_exc}",
+                    }
+            return {
+                "meeting_intelligence_status": "failed",
+                "meeting_intelligence_error": str(exc),
+            }
 
     def _cleanup(self) -> None:
         if self.driver:

@@ -102,6 +102,22 @@ class MeetingStorage:
         speakers = sorted({line.get("speaker", "Unknown") for line in lines if line.get("speaker")})
         return {"transcript_file": final_json.name, "total_lines": len(lines), "speakers_detected": speakers}
 
+    def write_meeting_intelligence(
+        self,
+        meeting_dir: str | Path,
+        result: dict[str, Any],
+        markdown: str,
+    ) -> dict[str, Any]:
+        json_path = Path(meeting_dir) / "meeting_intelligence.json"
+        md_path = Path(meeting_dir) / "meeting_intelligence.md"
+        _atomic_write_json(json_path, result)
+        md_path.write_text(markdown, encoding="utf-8")
+        return {
+            "meeting_intelligence_file": json_path.name,
+            "meeting_intelligence_markdown_file": md_path.name,
+            "meeting_intelligence_provider": result.get("provider"),
+        }
+
     def setup_meeting_logger(self, meeting_dir: str | Path, name: str) -> logging.Logger:
         logger = logging.getLogger(name)
         logger.setLevel(logging.INFO)

@@ -157,10 +157,40 @@ meetings/{YYYY-MM-DD}_{sanitized_meeting_title}/
   transcript_live.json
   transcript_final.json
   transcript_final.txt
+  meeting_intelligence.json
+  meeting_intelligence.md
   bot.log
 ```
 
 Audio chunks are written to `audio_chunks/` while recording. After ffmpeg concatenates them successfully, the chunks folder is deleted when `DELETE_CHUNKS_AFTER_CONCAT=true`.
+
+Meeting intelligence runs after transcript finalization when `MEETING_INTELLIGENCE_ENABLED=true`. The current provider is `rule_based`, which creates deterministic local summaries, key points, decisions, risks, questions, blockers, topics, and action items without sending transcript data to an external service. The provider is selected with:
+
+```env
+MEETING_INTELLIGENCE_PROVIDER=rule_based
+```
+
+For AI-generated intelligence, enable the LLM provider:
+
+```env
+MEETING_INTELLIGENCE_PROVIDER=llm
+MEETING_LLM_PROVIDER=openai_compatible
+MEETING_LLM_BASE_URL=http://localhost:11434/v1
+MEETING_LLM_MODEL=llama3.1
+MEETING_LLM_API_KEY=
+MEETING_LLM_RESPONSE_FORMAT=json_schema
+MEETING_LLM_FALLBACK_PROVIDER=rule_based
+```
+
+The `openai_compatible` LLM provider posts to `/chat/completions`, so it can work with OpenAI-compatible hosted APIs, Ollama's OpenAI-compatible endpoint, LM Studio, vLLM, or a self-hosted gateway. `MEETING_LLM_API_KEY` can be empty for local providers. `MEETING_LLM_RESPONSE_FORMAT` defaults to `json_schema`; use `text` for gateways that do not support structured output, `json_object` for older OpenAI-compatible servers, or `none` to omit the field. If the LLM request fails or returns invalid JSON after one repair retry, `MEETING_LLM_FALLBACK_PROVIDER=rule_based` lets meeting finalization still produce local intelligence artifacts.
+
+To regenerate intelligence for an existing meeting folder after improving the analyzer:
+
+```bash
+python3 -m meeting_intelligence meetings/2026-05-26_245pm
+```
+
+The rule-based provider normalizes repeated incremental Meet captions before analysis and records `raw_total_lines`, `normalized_segment_count`, and `normalization_applied` in `meeting_intelligence.json`.
 
 ## Audio Routing
 
@@ -220,12 +250,16 @@ The project currently captures Google Meet audio and Meet-provided captions. To 
 
 ### Meeting Intelligence
 
-- [ ] Generate an automatic meeting summary with key points, decisions, risks, and follow-ups.
-- [ ] Extract action items with owner, due date, source timestamp, and confidence.
-- [ ] Detect questions, blockers, objections, and unresolved topics.
-- [ ] Add topic segmentation so long meetings are grouped into readable sections.
+- [x] Add a provider-neutral meeting intelligence interface with a local rule-based provider.
+- [x] Generate local meeting intelligence artifacts with summary, key points, decisions, risks, action items, questions, blockers, and topics.
+- [x] Add AI/LLM-generated summaries behind user-controlled provider settings.
+- [x] Support OpenAI-compatible hosted APIs and self-hosted/local providers such as Ollama through one provider path.
+- [ ] Add native provider adapters where OpenAI-compatible APIs are insufficient.
+- [ ] Extract richer action items with owner, due date, source timestamp, and confidence using LLM-backed providers.
+- [ ] Detect objections and unresolved topics with better semantic accuracy.
+- [ ] Improve topic segmentation so long meetings are grouped into readable sections.
 - [ ] Add meeting highlights with links back to audio/transcript timestamps.
-- [ ] Add configurable summary templates for sales calls, standups, interviews, support calls, and product meetings.
+- [ ] Add optional summary style presets for sales calls, standups, interviews, support calls, and product meetings without requiring a static template for every meeting.
 
 ### Integrations
 

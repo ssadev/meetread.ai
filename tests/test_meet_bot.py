@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from types import SimpleNamespace
+import json
 import logging
 import tempfile
 import unittest
@@ -8,6 +9,7 @@ from unittest.mock import patch
 
 from audio_recorder import AudioRecorder
 from meet_bot import MeetBot
+from storage import MeetingStorage
 
 
 class MeetBotPlatformTests(unittest.TestCase):
@@ -168,6 +170,86 @@ class MeetBotPlatformTests(unittest.TestCase):
         bot.driver = FakeDriver({}, visible_text="Someone in the call denied your request to join")
 
         self.assertFalse(bot._inside_meeting())
+
+    def test_generate_meeting_intelligence_writes_artifacts(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            bot = MeetBot.__new__(MeetBot)
+            bot.settings = SimpleNamespace(meeting_intelligence_enabled=True, meeting_intelligence_provider="rule_based")
+            bot.storage = MeetingStorage(tmpdir)
+            meeting_dir = bot.storage.create_meeting_dir("Product Sync")
+            metadata = {"meeting_id": "m1", "title": "Product Sync", "transcript_file": "transcript_final.json"}
+
+            updates = bot._generate_meeting_intelligence(
+                meeting_dir,
+                [
+                    {
+                        "index": 1,
+                        "timestamp": "00:01:00",
+                        "speaker": "Alice",
+                        "text": "Alice will send the product launch notes tomorrow.",
+                    }
+                ],
+                metadata,
+            )
+
+            self.assertEqual(updates["meeting_intelligence_status"], "completed")
+            self.assertTrue((meeting_dir / "meeting_intelligence.md").exists())
+            result = json.loads((meeting_dir / "meeting_intelligence.json").read_text())
+            self.assertEqual(result["provider"], "rule_based")
+            self.assertEqual(result["action_items"][0]["owner"], "Alice")
+
+    def test_generate_meeting_intelligence_can_be_disabled(self):
+        bot = MeetBot.__new__(MeetBot)
+        bot.settings = SimpleNamespace(meeting_intelligence_enabled=False)
+
+        updates = bot._generate_meeting_intelligence("/tmp", [], {})
+
+        self.assertEqual(updates["meeting_intelligence_status"], "disabled")
+
+    def test_generate_meeting_intelligence_falls_back_when_llm_fails(self):
+        class FailingProvider:
+            def analyze(self, lines, metadata):
+                raise RuntimeError("llm unavailable")
+
+        class FallbackProvider:
+            def analyze(self, lines, metadata):
+                return {
+                    "provider": "rule_based",
+                    "title": "Fallback",
+                    "summary": "Fallback summary.",
+                    "key_points": [],
+                    "decisions": [],
+                    "risks": [],
+                    "action_items": [],
+                    "questions": [],
+                    "blockers": [],
+                    "topics": [],
+                }
+
+        def fake_factory(provider_name, settings=None):
+            if provider_name == "llm":
+                return FailingProvider()
+            return FallbackProvider()
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            bot = MeetBot.__new__(MeetBot)
+            bot.settings = SimpleNamespace(
+                meeting_intelligence_enabled=True,
+                meeting_intelligence_provider="llm",
+                meeting_llm_fallback_provider="rule_based",
+            )
+            bot.storage = MeetingStorage(tmpdir)
+            meeting_dir = bot.storage.create_meeting_dir("Fallback")
+
+            with patch("meet_bot.create_meeting_intelligence_provider", fake_factory), patch(
+                "meet_bot.LOGGER.exception"
+            ):
+                updates = bot._generate_meeting_intelligence(meeting_dir, [], {"title": "Fallback"})
+
+            self.assertEqual(updates["meeting_intelligence_status"], "completed_with_fallback")
+            result = json.loads((meeting_dir / "meeting_intelligence.json").read_text())
+            self.assertEqual(result["provider"], "rule_based")
+            self.assertEqual(result["fallback_reason"], "llm unavailable")
 
 
 class FakeElement:
