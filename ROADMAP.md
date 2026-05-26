@@ -1,6 +1,17 @@
 # Product Roadmap / TODO
 
-MeetRead currently joins Google Meet calls from Calendar, records routed audio, captures Meet-provided captions, generates local and LLM-backed meeting intelligence, and can deliver structured summary emails through SMTP.
+MeetRead's objective is to become a full-fledged open-source, self-hosted alternative to hosted meeting assistants such as Read.ai and Fireflies for Google Meet. It is designed for individuals and organizations that want meeting capture, transcripts, summaries, action items, and integrations while keeping meeting data inside infrastructure they control.
+
+The current implementation joins Google Meet calls from Calendar, records routed audio, captures Meet-provided captions, generates local and LLM-backed meeting intelligence, and can deliver structured summary emails through SMTP. The roadmap below tracks the work required to evolve that capture bot into a production-ready meeting intelligence product.
+
+## Product Principles
+
+- Self-hosted first: users should be able to run MeetRead on their own machine, server, cloud account, or Kubernetes environment without depending on a hosted MeetRead SaaS.
+- Privacy by default: meeting audio, transcripts, summaries, logs, and credentials should remain local unless the operator explicitly configures an external provider or integration.
+- Local fallback: core capture and deterministic meeting intelligence should continue working when optional LLM, SMTP, storage, or integration providers are unavailable.
+- Organization-ready: the product should grow toward workspaces, permissions, retention policies, audit logs, consent controls, and admin-level configuration.
+- Extensible integrations: Slack, Notion, Confluence, Linear, Jira, HubSpot, object storage, webhooks, and APIs should be optional adapters around a stable internal meeting artifact model.
+- Reliable capture before polish: meeting join reliability, audio health, caption health, diagnostics, and recovery should remain the foundation for dashboard and workflow features.
 
 ## Current Capabilities
 

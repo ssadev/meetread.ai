@@ -1,6 +1,34 @@
-# Google Meet Bot
+# MeetRead
 
-Python 3.11 meeting bot that joins Google Meet calls, records routed system audio, and scrapes Google Meet live captions in parallel. It does not run Whisper, speech-to-text, or ML transcription. The transcript comes only from Meet captions.
+MeetRead is an open-source, self-hosted Google Meet capture and meeting intelligence platform. The long-term goal is to provide an alternative to hosted meeting assistants such as Read.ai and Fireflies for individuals and organizations that need meeting capture, transcripts, summaries, and action items without sending their meeting data outside their own infrastructure.
+
+Today, MeetRead is a Python 3.11 meeting bot that joins Google Meet calls, records routed system audio, and scrapes Google Meet live captions in parallel. It can generate local and LLM-backed meeting intelligence and send optional summary emails. The current transcript source is Google Meet captions; it does not run Whisper, speech-to-text, or ML transcription by default.
+
+## Product Objective
+
+MeetRead is being built toward a full-fledged open-source meeting capture product with these priorities:
+
+- Keep meeting artifacts under the user's control: audio, transcripts, summaries, logs, credentials, and integration data should stay on infrastructure the user or organization owns.
+- Capture Google Meet reliably: join scheduled calls, record audio, collect captions/transcripts, detect meeting lifecycle states, and preserve durable per-meeting artifacts.
+- Provide privacy-preserving meeting intelligence: local deterministic summaries by default, optional self-hosted or user-configured LLM providers, and clear fallbacks when AI providers fail.
+- Support both individuals and organizations: local setup for personal use, plus future team/workspace concepts, permissions, audit logs, retention controls, and deployment options.
+- Become a practical open-source replacement for hosted meeting assistants: dashboard, searchable transcripts, synced playback, editable summaries, action items, integrations, APIs, and production operations.
+
+The product roadmap and TODO list live in [ROADMAP.md](ROADMAP.md).
+
+## Current Scope
+
+The current implementation focuses on capture and post-meeting artifacts:
+
+- Calendar polling for upcoming Google Meet events.
+- Automated Meet join flow using a dedicated bot Google account.
+- Routed system audio recording on Docker/Linux and macOS.
+- Live caption scraping from the Google Meet browser DOM.
+- Per-meeting output folders with metadata, logs, audio, transcripts, and intelligence artifacts.
+- Rule-based local meeting intelligence with optional OpenAI-compatible LLM providers.
+- Optional SMTP summary email delivery.
+
+This is not yet a complete Read.ai/Fireflies-class product. The roadmap tracks the remaining product, reliability, security, integration, and operations work needed to get there.
 
 ## Layout
 
@@ -249,7 +277,11 @@ After the bot account is signed in, close that Chrome window and run `python mai
 
 ## Roadmap
 
-The product roadmap and TODO list live in [ROADMAP.md](ROADMAP.md).
+The product roadmap and TODO list live in [ROADMAP.md](ROADMAP.md). Future work should preserve the core project direction: open-source, self-hosted, privacy-conscious meeting capture and intelligence for Google Meet.
+
+## Code Agent Context
+
+Coding agents should read [AGENTS.md](AGENTS.md) before making changes. It summarizes the project objective, architecture, privacy rules, local setup, verification commands, and module map for future development.
 
 ## systemd Example
 
