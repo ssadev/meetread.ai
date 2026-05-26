@@ -251,6 +251,16 @@ class MeetBotPlatformTests(unittest.TestCase):
             self.assertEqual(result["provider"], "rule_based")
             self.assertEqual(result["fallback_reason"], "llm unavailable")
 
+    def test_send_summary_email_delegates_to_delivery_module(self):
+        bot = MeetBot.__new__(MeetBot)
+        bot.settings = SimpleNamespace(summary_email_enabled=True)
+
+        with patch("meet_bot.send_summary_email_for_meeting", return_value={"summary_email_status": "sent"}) as send:
+            updates = bot._send_summary_email("/tmp/meeting", {"title": "Product Sync"})
+
+        self.assertEqual(updates["summary_email_status"], "sent")
+        send.assert_called_once_with("/tmp/meeting", {"title": "Product Sync"}, settings=bot.settings)
+
 
 class FakeElement:
     def __init__(self):

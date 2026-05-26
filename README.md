@@ -192,6 +192,27 @@ python3 -m meeting_intelligence meetings/2026-05-26_245pm
 
 The rule-based provider normalizes repeated incremental Meet captions before analysis and records `raw_total_lines`, `normalized_segment_count`, and `normalization_applied` in `meeting_intelligence.json`.
 
+Summary email delivery runs after meeting finalization when `SUMMARY_EMAIL_ENABLED=true`. It sends a concise inline summary to `SMTP_SUMMARY_RECIPIENTS`; it does not email calendar attendees automatically and does not attach large files by default.
+
+```env
+SUMMARY_EMAIL_ENABLED=true
+SMTP_HOST=smtp.example.com
+SMTP_PORT=587
+SMTP_USERNAME=bot@example.com
+SMTP_PASSWORD=app-password
+SMTP_FROM=MeetRead <bot@example.com>
+SMTP_SUMMARY_RECIPIENTS=alice@example.com,bob@example.com
+SMTP_USE_TLS=true
+SMTP_USE_SSL=false
+SMTP_SUBJECT_PREFIX=[MeetRead]
+```
+
+Email delivery status is recorded in `metadata.json` as `summary_email_status`, `summary_email_sent_at`, `summary_email_recipients`, and `summary_email_error` when applicable. SMTP failures do not change the meeting capture status. To resend a summary for an existing meeting:
+
+```bash
+python3 -m email_delivery meetings/2026-05-26_615pm
+```
+
 ## Audio Routing
 
 On Linux, the bot creates the PulseAudio sink before launching Chrome:
@@ -263,7 +284,8 @@ The project currently captures Google Meet audio and Meet-provided captions. To 
 
 ### Integrations
 
-- [ ] Push summaries and action items to Slack, email, Notion, Confluence, Linear, Jira, or HubSpot.
+- [x] Push summaries and action items by email through SMTP.
+- [ ] Push summaries and action items to Slack, Notion, Confluence, Linear, Jira, or HubSpot.
 - [ ] Create calendar event follow-up notes automatically after the meeting ends.
 - [ ] Add webhook events for `meeting_started`, `meeting_completed`, `meeting_failed`, and `summary_ready`.
 - [ ] Store artifacts in S3, GCS, or another object store instead of only the local filesystem.
