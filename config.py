@@ -83,6 +83,7 @@ class Settings:
     meeting_llm_timeout_seconds: int
     meeting_llm_max_input_chars: int
     meeting_llm_response_format: str
+    meeting_llm_reasoning_effort: str | None
     meeting_llm_fallback_provider: str
     summary_email_enabled: bool
     smtp_host: str
@@ -137,6 +138,7 @@ def get_settings(env_path: str | Path = ".env") -> Settings:
         meeting_llm_timeout_seconds=int(os.getenv("MEETING_LLM_TIMEOUT_SECONDS", "120")),
         meeting_llm_max_input_chars=int(os.getenv("MEETING_LLM_MAX_INPUT_CHARS", "60000")),
         meeting_llm_response_format=os.getenv("MEETING_LLM_RESPONSE_FORMAT", "json_schema"),
+        meeting_llm_reasoning_effort=os.getenv("MEETING_LLM_REASONING_EFFORT") or None,
         meeting_llm_fallback_provider=os.getenv("MEETING_LLM_FALLBACK_PROVIDER", "rule_based"),
         summary_email_enabled=_bool_env("SUMMARY_EMAIL_ENABLED", False),
         smtp_host=os.getenv("SMTP_HOST", ""),

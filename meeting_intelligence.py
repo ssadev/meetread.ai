@@ -13,6 +13,7 @@ from typing import Any, Callable, Protocol
 
 DEFAULT_PROVIDER = "rule_based"
 DEFAULT_LLM_PROVIDER = "openai_compatible"
+OPENAI_COMPATIBLE_PROVIDERS = {DEFAULT_LLM_PROVIDER, "sarvam"}
 
 
 class MeetingIntelligenceProvider(Protocol):
@@ -74,6 +75,7 @@ class LLMSettings:
     timeout_seconds: int = 120
     max_input_chars: int = 60000
     response_format: str = "json_schema"
+    reasoning_effort: str | None = None
 
 
 ChatClient = Callable[[list[dict[str, str]], LLMSettings], str]
@@ -279,11 +281,12 @@ def _llm_settings_from(settings: Any) -> LLMSettings:
         timeout_seconds=int(getattr(settings, "meeting_llm_timeout_seconds", 120)),
         max_input_chars=int(getattr(settings, "meeting_llm_max_input_chars", 60000)),
         response_format=getattr(settings, "meeting_llm_response_format", "json_schema"),
+        reasoning_effort=getattr(settings, "meeting_llm_reasoning_effort", None) or None,
     )
 
 
 def _openai_compatible_chat(messages: list[dict[str, str]], settings: LLMSettings) -> str:
-    if settings.provider != DEFAULT_LLM_PROVIDER:
+    if settings.provider not in OPENAI_COMPATIBLE_PROVIDERS:
         raise ValueError(f"Unsupported LLM provider: {settings.provider}")
     base_url = settings.base_url.rstrip("/")
     request_body: dict[str, Any] = {
@@ -291,6 +294,8 @@ def _openai_compatible_chat(messages: list[dict[str, str]], settings: LLMSetting
         "messages": messages,
         "temperature": settings.temperature,
     }
+    if settings.reasoning_effort:
+        request_body["reasoning_effort"] = settings.reasoning_effort
     response_format = _llm_response_format(settings.response_format)
     if response_format:
         request_body["response_format"] = response_format
