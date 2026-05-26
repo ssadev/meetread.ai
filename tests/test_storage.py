@@ -35,3 +35,22 @@ class StorageTests(unittest.TestCase):
             self.assertEqual(updates["total_lines"], 1)
             self.assertEqual(json.loads((meeting_dir / "transcript_final.json").read_text())[0]["text"], "Hi")
             self.assertEqual((meeting_dir / "transcript_final.txt").read_text(), "[00:00:01] Alice: Hi\n")
+
+    def test_write_meeting_intelligence_writes_json_and_markdown(self):
+        with TemporaryDirectory() as tmp:
+            storage = MeetingStorage(tmp)
+            meeting_dir = storage.create_meeting_dir("Q3 Planning")
+
+            updates = storage.write_meeting_intelligence(
+                meeting_dir,
+                {"provider": "rule_based", "summary": "Summary"},
+                "# Summary\n",
+            )
+
+            self.assertEqual(updates["meeting_intelligence_file"], "meeting_intelligence.json")
+            self.assertEqual(updates["meeting_intelligence_provider"], "rule_based")
+            self.assertEqual(
+                json.loads((meeting_dir / "meeting_intelligence.json").read_text())["summary"],
+                "Summary",
+            )
+            self.assertEqual((meeting_dir / "meeting_intelligence.md").read_text(), "# Summary\n")
