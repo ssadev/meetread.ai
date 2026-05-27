@@ -17,8 +17,10 @@ The current implementation joins Google Meet calls from Calendar, records routed
 
 - [x] Poll Google Calendar for upcoming Google Meet events.
 - [x] Join Google Meet from Docker/Linux or macOS.
+- [x] Manual meeting join by URL with optional background/detach mode (no calendar required).
 - [x] Use a dedicated bot display name on the Meet pre-join screen.
 - [x] Block bot camera/microphone permissions and disable pre-join mic/camera controls.
+- [x] Detect Meet lobby and wait for host admission up to `LOBBY_WAIT_MINUTES`; return `not_admitted` on timeout.
 - [x] Record routed system audio to WAV and optional MP3.
 - [x] Capture Google Meet live captions from the browser DOM.
 - [x] Write per-meeting metadata, logs, audio, live transcript, final transcript JSON, and final transcript text.
@@ -58,8 +60,11 @@ The current implementation joins Google Meet calls from Calendar, records routed
 - [x] Generate summary, key points, decisions, risks, action items, questions, blockers, and topics.
 - [x] Add AI/LLM-generated summaries behind user-controlled provider settings.
 - [x] Support OpenAI-compatible hosted APIs and self-hosted/local providers such as Ollama, LM Studio, and vLLM through one provider path.
+- [x] Support Sarvam AI as a named LLM provider (`MEETING_LLM_PROVIDER=sarvam`).
 - [x] Support `json_schema`, `json_object`, `text`, and omitted response-format modes for OpenAI-compatible gateways.
 - [x] Parse LLM JSON from either `message.content` or `message.reasoning_content`.
+- [x] Pass `reasoning_effort` to providers that support it (`MEETING_LLM_REASONING_EFFORT`).
+- [x] Chunk long transcripts automatically and merge partial results for LLM providers with input length limits.
 - [x] Fall back to rule-based intelligence when LLM generation fails.
 - [x] Add a manual intelligence regeneration command for existing meeting folders.
 - [ ] Add native provider adapters where OpenAI-compatible APIs are insufficient.

@@ -21,29 +21,38 @@ The product roadmap and TODO list live in [ROADMAP.md](ROADMAP.md).
 The current implementation focuses on capture and post-meeting artifacts:
 
 - Calendar polling for upcoming Google Meet events.
+- Manual meeting join by URL with optional background mode (no calendar required).
 - Automated Meet join flow using a dedicated bot Google account.
+- Lobby admission detection with configurable wait timeout.
 - Routed system audio recording on Docker/Linux and macOS.
 - Live caption scraping from the Google Meet browser DOM.
 - Per-meeting output folders with metadata, logs, audio, transcripts, and intelligence artifacts.
-- Rule-based local meeting intelligence with optional OpenAI-compatible LLM providers.
-- Optional SMTP summary email delivery.
+- Rule-based local meeting intelligence with optional LLM providers (OpenAI-compatible, Sarvam AI).
+- Optional SMTP summary email delivery with manual resend support.
 
 This is not yet a complete Read.ai/Fireflies-class product. The roadmap tracks the remaining product, reliability, security, integration, and operations work needed to get there.
 
 ## Layout
 
 ```text
-google-meet-bot/
-  main.py
-  calendar_watcher.py
-  meet_bot.py
-  audio_recorder.py
-  caption_scraper.py
-  storage.py
-  config.py
-  auth.py
+meetread.ai/
+  main.py               # calendar-driven daemon
+  join_meeting.py       # manual join by URL (no calendar needed)
+  meet_bot.py           # core browser automation and meeting lifecycle
+  calendar_watcher.py   # Google Calendar polling
+  audio_recorder.py     # PulseAudio/sounddevice capture
+  caption_scraper.py    # Google Meet DOM caption scraping
+  meeting_intelligence.py  # rule-based and LLM intelligence providers
+  email_delivery.py     # SMTP summary email delivery
+  storage.py            # per-meeting artifact filesystem layout
+  config.py             # settings dataclass, env loading
+  auth.py               # Google OAuth flow
+  list_audio_devices.py # utility to enumerate audio devices
   requirements.txt
   .env.example
+  .env.docker.example
+  Dockerfile
+  docker-compose.yml
   tests/
 ```
 
@@ -158,6 +167,8 @@ This creates `token.json`.
 
 ## Running
 
+### Calendar daemon
+
 ```bash
 python main.py
 ```
@@ -172,6 +183,30 @@ Both workers receive the same meeting start timestamp and the same `threading.Ev
 Before requesting entry, the bot blocks Chrome camera/microphone permissions, turns off Meet's pre-join mic/camera controls if they appear, and fills the Google Meet guest name prompt with `BOT_DISPLAY_NAME` when the prompt is shown.
 
 If Google Meet shows that the bot was removed from the meeting, the bot treats that as meeting end and finalizes recording/transcripts by default. Set `TREAT_REMOVAL_AS_MEETING_END=false` to disable that behavior.
+
+The bot waits up to `LOBBY_WAIT_MINUTES` for a host to admit it from the Meet lobby before treating the join as failed.
+
+### Manual join (no calendar required)
+
+```bash
+python join_meeting.py "https://meet.google.com/abc-defg-hij"
+python join_meeting.py "https://meet.google.com/abc-defg-hij" --title "Weekly Sync"
+python join_meeting.py "https://meet.google.com/abc-defg-hij" --duration-hours 2
+python join_meeting.py "https://meet.google.com/abc-defg-hij" --end-time "2026-05-27T15:00:00+05:30"
+```
+
+To detach from the terminal and run the bot in the background:
+
+```bash
+python join_meeting.py "https://meet.google.com/abc-defg-hij" --background
+# Prints PID and log path, then exits. Bot keeps running.
+```
+
+Inside a running Docker container:
+
+```bash
+docker exec <container> python join_meeting.py "https://meet.google.com/abc-defg-hij" --background
+```
 
 ## Output
 
@@ -206,11 +241,29 @@ MEETING_LLM_PROVIDER=openai_compatible
 MEETING_LLM_BASE_URL=http://localhost:11434/v1
 MEETING_LLM_MODEL=llama3.1
 MEETING_LLM_API_KEY=
+MEETING_LLM_TEMPERATURE=0.2
+MEETING_LLM_TIMEOUT_SECONDS=120
+MEETING_LLM_MAX_INPUT_CHARS=60000
 MEETING_LLM_RESPONSE_FORMAT=json_schema
 MEETING_LLM_FALLBACK_PROVIDER=rule_based
 ```
 
-The `openai_compatible` LLM provider posts to `/chat/completions`, so it can work with OpenAI-compatible hosted APIs, Ollama's OpenAI-compatible endpoint, LM Studio, vLLM, or a self-hosted gateway. `MEETING_LLM_API_KEY` can be empty for local providers. `MEETING_LLM_RESPONSE_FORMAT` defaults to `json_schema`; use `text` for gateways that do not support structured output, `json_object` for older OpenAI-compatible servers, or `none` to omit the field. If the LLM request fails or returns invalid JSON after one repair retry, `MEETING_LLM_FALLBACK_PROVIDER=rule_based` lets meeting finalization still produce local intelligence artifacts.
+The `openai_compatible` LLM provider posts to `/chat/completions` and works with Ollama, LM Studio, vLLM, OpenAI, or any OpenAI-compatible gateway. `MEETING_LLM_API_KEY` can be empty for local providers. `MEETING_LLM_RESPONSE_FORMAT` defaults to `json_schema`; use `text` for gateways that do not support structured output, `json_object` for older servers, or `none` to omit the field. `MEETING_LLM_MAX_INPUT_CHARS` controls how much transcript text is sent per request; long transcripts are chunked automatically and results merged. If the LLM request fails or returns invalid JSON, `MEETING_LLM_FALLBACK_PROVIDER=rule_based` lets meeting finalization still produce local intelligence artifacts.
+
+**Sarvam AI** is also supported as an LLM provider:
+
+```env
+MEETING_INTELLIGENCE_PROVIDER=llm
+MEETING_LLM_PROVIDER=sarvam
+MEETING_LLM_BASE_URL=https://api.sarvam.ai/v1
+MEETING_LLM_MODEL=sarvam-105b
+MEETING_LLM_API_KEY=your-sarvam-api-key
+MEETING_LLM_RESPONSE_FORMAT=json_object
+MEETING_LLM_REASONING_EFFORT=high
+MEETING_LLM_FALLBACK_PROVIDER=rule_based
+```
+
+`MEETING_LLM_REASONING_EFFORT` is optional and passed to providers that support it (e.g. `low`, `medium`, `high` on Sarvam).
 
 To regenerate intelligence for an existing meeting folder after improving the analyzer:
 
@@ -243,7 +296,9 @@ python3 -m email_delivery meetings/2026-05-26_615pm
 
 ## Audio Routing
 
-On Linux, the bot creates the PulseAudio sink before launching Chrome:
+`AUDIO_BACKEND` defaults to `auto`, which selects `pulseaudio` on Linux and `sounddevice` on macOS.
+
+On Linux (or Docker), the bot creates a per-meeting PulseAudio null sink before launching Chrome:
 
 ```bash
 pactl load-module module-null-sink sink_name=MeetBot_xxx
@@ -251,9 +306,20 @@ pactl set-default-sink MeetBot_xxx
 pactl set-default-source MeetBot_xxx.monitor
 ```
 
-Chrome is started with `--alsa-output-device=pulse`, so meeting audio goes to the virtual sink and `sounddevice` records from `MeetBot_xxx.monitor`.
+Chrome routes Meet audio into that virtual sink, and `sounddevice` records from `MeetBot_xxx.monitor`.
 
-On macOS, set `AUDIO_BACKEND=sounddevice` and `AUDIO_INPUT_DEVICE=BlackHole 2ch`. The app does not call `pactl` and does not start a virtual display on macOS.
+On macOS, the bot does not call `pactl` and does not start a virtual display. Set:
+
+```env
+AUDIO_BACKEND=sounddevice
+AUDIO_INPUT_DEVICE=BlackHole 2ch
+```
+
+To enumerate available input device names:
+
+```bash
+python list_audio_devices.py
+```
 
 ## Google Account Notes
 
