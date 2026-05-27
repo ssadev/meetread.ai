@@ -96,8 +96,8 @@ The current implementation joins Google Meet calls from Calendar, records routed
 - [ ] Add playback with transcript syncing and click-to-seek timestamps.
 - [ ] Add editable transcripts and human correction workflow.
 - [ ] Add editable summaries and action-item correction workflow.
-- [ ] Add shareable meeting pages with permissions.
 - [ ] Add organization, workspace, and team concepts.
+- [ ] Add shareable meeting pages with permissions.
 - [ ] Add notification preferences for meeting completion and summary delivery.
 
 ## Security, Privacy, And Compliance
