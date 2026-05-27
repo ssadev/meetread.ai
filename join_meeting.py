@@ -10,17 +10,24 @@ Examples:
     python join_meeting.py "https://meet.google.com/abc-defg-hij" --duration-hours 2
     python join_meeting.py "https://meet.google.com/abc-defg-hij" --end-time "2026-05-27T15:00:00+05:30"
 
+Run in background (terminal-safe):
+    python join_meeting.py "https://meet.google.com/abc-defg-hij" --background
+    # Prints PID + log path, exits immediately. Bot keeps running inside container.
+
 Docker exec:
-    docker exec <container> python join_meeting.py "https://meet.google.com/abc-defg-hij"
+    docker exec <container> python join_meeting.py "https://meet.google.com/abc-defg-hij" --background
 """
 from __future__ import annotations
 
 import argparse
 import logging
+import os
 import re
+import subprocess
 import sys
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
+from pathlib import Path
 
 from config import SETTINGS
 from meet_bot import MeetBot
@@ -51,6 +58,11 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument("meet_url", help="Google Meet URL (https://meet.google.com/xxx-xxxx-xxx)")
     parser.add_argument("--title", default="Manual Meeting", help="Meeting title for storage/logs (default: 'Manual Meeting')")
+    parser.add_argument(
+        "--background", "-b",
+        action="store_true",
+        help="Detach immediately; bot runs in background and logs to a file",
+    )
     group = parser.add_mutually_exclusive_group()
     group.add_argument(
         "--duration-hours",
@@ -89,6 +101,35 @@ def resolve_end_time(args: argparse.Namespace, start: datetime) -> datetime:
     return start + timedelta(hours=hours)
 
 
+def _spawn_background(args: argparse.Namespace, meet_url: str) -> int:
+    logs_dir = Path(SETTINGS.meetings_output_dir)
+    logs_dir.mkdir(parents=True, exist_ok=True)
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    log_path = logs_dir / f"manual_join_{timestamp}.log"
+    pid_path = logs_dir / f"manual_join_{timestamp}.pid"
+
+    cmd = [sys.executable, os.path.abspath(__file__), meet_url, "--title", args.title]
+    if args.duration_hours is not None:
+        cmd += ["--duration-hours", str(args.duration_hours)]
+    elif args.end_time is not None:
+        cmd += ["--end-time", args.end_time]
+
+    log_file = log_path.open("w", encoding="utf-8")
+    proc = subprocess.Popen(
+        cmd,
+        stdout=log_file,
+        stderr=subprocess.STDOUT,
+        start_new_session=True,
+        close_fds=True,
+    )
+    pid_path.write_text(str(proc.pid), encoding="utf-8")
+    print(f"Bot started in background.")
+    print(f"  PID : {proc.pid}  (saved to {pid_path})")
+    print(f"  Logs: {log_path}")
+    print(f"  Kill: kill {proc.pid}")
+    return 0
+
+
 def main() -> int:
     args = parse_args()
 
@@ -97,6 +138,9 @@ def main() -> int:
     except ValueError as exc:
         LOGGER.error("%s", exc)
         return 1
+
+    if args.background:
+        return _spawn_background(args, meet_url)
 
     now = datetime.now(timezone.utc)
     end_time = resolve_end_time(args, now)
