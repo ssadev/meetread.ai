@@ -160,10 +160,22 @@ class MeetBotPlatformTests(unittest.TestCase):
         self.assertTrue(bot._join_denied_detected())
 
     def test_inside_meeting_requires_visible_call_controls(self):
+        leave_button = FakeElement()
         bot = MeetBot.__new__(MeetBot)
-        bot.driver = FakeDriver({}, visible_text="People captions Leave call hidden in source")
+        bot.driver = FakeDriver({'button[aria-label*="Leave call" i]': [leave_button]}, visible_text="People captions")
 
         self.assertTrue(bot._inside_meeting())
+
+    def test_waiting_for_host_page_is_not_inside_meeting(self):
+        leave_button = FakeElement()
+        bot = MeetBot.__new__(MeetBot)
+        bot.driver = FakeDriver(
+            {'button[aria-label*="Leave call" i]': [leave_button]},
+            visible_text="Please wait until a meeting host brings you into the call",
+        )
+
+        self.assertTrue(bot._waiting_for_host_detected())
+        self.assertFalse(bot._inside_meeting())
 
     def test_denied_page_is_not_inside_meeting(self):
         bot = MeetBot.__new__(MeetBot)

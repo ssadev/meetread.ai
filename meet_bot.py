@@ -443,7 +443,7 @@ class MeetBot:
             if self._inside_meeting():
                 logger.info("Admitted to Google Meet")
                 return "joined"
-            if self._page_contains("Someone will let you in") or self._page_contains("Ask to join"):
+            if self._waiting_for_host_detected():
                 self._sleep(30)
                 continue
             self._sleep(5)
@@ -574,6 +574,21 @@ class MeetBot:
             "you cannot join this call",
         ]
         return any(marker in page for marker in denied_markers)
+
+    def _waiting_for_host_detected(self) -> bool:
+        page = self._page_text().lower()
+        waiting_markers = [
+            "please wait until a meeting host brings you into the call",
+            "meeting host brings you into the call",
+            "someone will let you in",
+            "waiting to be let in",
+            "waiting for the host",
+            "you'll join the call when someone lets you in",
+            "you’ll join the call when someone lets you in",
+            "ask to join",
+            "asking to join",
+        ]
+        return any(marker in page for marker in waiting_markers)
 
     def _finish(
         self,
@@ -715,6 +730,8 @@ class MeetBot:
                 self._click_first([f'button[aria-label*="Turn on {label}" i]'], timeout=3)
 
     def _inside_meeting(self) -> bool:
+        if self._join_denied_detected() or self._waiting_for_host_detected():
+            return False
         in_call_controls = [
             'button[aria-label*="Leave call" i]',
             'button[data-tooltip*="Leave call" i]',
@@ -722,8 +739,6 @@ class MeetBot:
             'button[aria-label*="Turn off captions" i]',
         ]
         if self._find_first(in_call_controls, timeout=1):
-            return True
-        if self._page_contains("Leave call"):
             return True
         return False
 
