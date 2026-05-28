@@ -7,7 +7,7 @@ import unittest
 from unittest.mock import patch
 
 import audio_recorder as module
-from audio_recorder import AudioRecorder
+from audio_recorder import AudioRecorder, _max_sample_peak
 
 
 def _write_wav(path: Path, sample: int = 1000) -> None:
@@ -63,3 +63,17 @@ class AudioRecorderTests(unittest.TestCase):
             _write_wav(chunk)
 
             self.assertTrue(AudioRecorder()._chunk_has_audio(chunk))
+
+    def test_max_sample_peak_handles_unsigned_8_bit_audio(self):
+        self.assertEqual(_max_sample_peak(bytes([128, 128]), 1), 0)
+        self.assertGreaterEqual(_max_sample_peak(bytes([128, 255]), 1), module.MIN_AUDIO_PEAK)
+
+    def test_max_sample_peak_handles_signed_32_bit_audio(self):
+        silent = (0).to_bytes(4, "little", signed=True) * 2
+        signal = (10_000_000).to_bytes(4, "little", signed=True) * 2
+
+        self.assertEqual(_max_sample_peak(silent, 4), 0)
+        self.assertGreaterEqual(_max_sample_peak(signal, 4), module.MIN_AUDIO_PEAK)
+
+    def test_max_sample_peak_returns_zero_for_unsupported_sample_width(self):
+        self.assertEqual(_max_sample_peak(b"\xff\xff", 5), 0)

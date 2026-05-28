@@ -18,6 +18,7 @@ from storage import MeetingStorage
 
 
 LOGGER = logging.getLogger(__name__)
+# Treat samples below roughly -54 dBFS in 16-bit PCM as silence/noise floor.
 MIN_AUDIO_PEAK = 64
 
 
@@ -199,10 +200,21 @@ class AudioRecorder:
 
 
 def _max_sample_peak(frames: bytes, sample_width: int) -> int:
-    if sample_width != 2:
-        return max(frames) if frames else 0
+    if sample_width == 1:
+        return max((abs(sample - 128) << 8 for sample in frames), default=0)
+    if sample_width not in {2, 3, 4} or len(frames) < sample_width:
+        return 0
     samples = array("h")
-    samples.frombytes(frames)
-    if sys.byteorder != "little":
-        samples.byteswap()
-    return max((abs(sample) for sample in samples), default=0)
+    if sample_width == 2:
+        samples.frombytes(frames[: len(frames) - (len(frames) % sample_width)])
+        if sys.byteorder != "little":
+            samples.byteswap()
+        return max((abs(sample) for sample in samples), default=0)
+    peak = 0
+    shift = 8 if sample_width == 3 else 16
+    frame_count = len(frames) // sample_width
+    for index in range(frame_count):
+        start = index * sample_width
+        sample = int.from_bytes(frames[start : start + sample_width], "little", signed=True)
+        peak = max(peak, abs(sample) >> shift)
+    return peak

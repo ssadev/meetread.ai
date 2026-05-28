@@ -836,13 +836,13 @@ class MeetBot:
         try:
             return bool(element.is_displayed())
         except Exception:
-            return True
+            return False
 
     def _element_enabled(self, element: Any) -> bool:
         try:
             return bool(element.is_enabled())
         except Exception:
-            return True
+            return False
 
     def _normalize_button_label(self, label: str) -> str:
         return " ".join(str(label or "").strip().lower().split())

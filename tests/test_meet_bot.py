@@ -296,6 +296,26 @@ class MeetBotPlatformTests(unittest.TestCase):
 
         self.assertFalse(leave_button.clicked)
 
+    def test_stale_dialog_elements_are_not_treated_as_visible_or_enabled(self):
+        bot = MeetBot.__new__(MeetBot)
+        visible_error = FakeElement(display_error=True)
+        enabled_error = FakeElement(enabled_error=True)
+
+        self.assertFalse(bot._element_visible(visible_error))
+        self.assertFalse(bot._element_enabled(enabled_error))
+
+    def test_stale_dialog_is_ignored_by_blocker_detection(self):
+        dialog = FakeElement(
+            text="Your call audio and video will be shared with Read AI",
+            attrs={"aria-modal": "true"},
+            children_by_selector={'.//button|.//*[@role="button"]': [FakeElement(text="Join now")]},
+            display_error=True,
+        )
+        bot = MeetBot.__new__(MeetBot)
+        bot.driver = FakeDriver({'//*[@aria-modal="true" or @role="dialog"]': [dialog]})
+
+        self.assertFalse(bot._blocking_join_dialog_detected())
+
     def test_join_meeting_returns_blocked_by_dialog_for_unresolved_blocker(self):
         join_button = FakeElement(text="Join now")
         continue_button = FakeElement(text="Continue")
@@ -435,18 +455,31 @@ class MeetBotPlatformTests(unittest.TestCase):
 
 
 class FakeElement:
-    def __init__(self, text="", attrs=None, children_by_selector=None):
+    def __init__(
+        self,
+        text="",
+        attrs=None,
+        children_by_selector=None,
+        display_error=False,
+        enabled_error=False,
+    ):
         self.cleared = False
         self.clicked = False
         self.typed_text = ""
         self.text = text
         self.attrs = attrs or {}
         self.children_by_selector = children_by_selector or {}
+        self.display_error = display_error
+        self.enabled_error = enabled_error
 
     def is_displayed(self):
+        if self.display_error:
+            raise RuntimeError("stale element")
         return True
 
     def is_enabled(self):
+        if self.enabled_error:
+            raise RuntimeError("stale element")
         return True
 
     def clear(self):
