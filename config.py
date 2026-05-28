@@ -85,6 +85,7 @@ class Settings:
     meeting_llm_response_format: str
     meeting_llm_reasoning_effort: str | None
     meeting_llm_fallback_provider: str
+    meet_dialog_llm_enabled: bool
     summary_email_enabled: bool
     smtp_host: str
     smtp_port: int
@@ -140,6 +141,7 @@ def get_settings(env_path: str | Path = ".env") -> Settings:
         meeting_llm_response_format=os.getenv("MEETING_LLM_RESPONSE_FORMAT", "json_schema"),
         meeting_llm_reasoning_effort=os.getenv("MEETING_LLM_REASONING_EFFORT") or None,
         meeting_llm_fallback_provider=os.getenv("MEETING_LLM_FALLBACK_PROVIDER", "rule_based"),
+        meet_dialog_llm_enabled=_bool_env("MEET_DIALOG_LLM_ENABLED", True),
         summary_email_enabled=_bool_env("SUMMARY_EMAIL_ENABLED", False),
         smtp_host=os.getenv("SMTP_HOST", ""),
         smtp_port=int(os.getenv("SMTP_PORT", "587")),

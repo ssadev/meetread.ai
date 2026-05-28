@@ -286,6 +286,51 @@ def _llm_settings_from(settings: Any) -> LLMSettings:
 
 
 def _openai_compatible_chat(messages: list[dict[str, str]], settings: LLMSettings) -> str:
+    return _openai_compatible_chat_with_schema(
+        messages,
+        settings,
+        schema_name="meeting_intelligence",
+        schema=MEETING_INTELLIGENCE_JSON_SCHEMA,
+    )
+
+
+def complete_llm_json(
+    messages: list[dict[str, str]],
+    settings: Any,
+    *,
+    schema_name: str,
+    schema: dict[str, Any],
+    chat_client: ChatClient | None = None,
+) -> dict[str, Any]:
+    llm_settings = _llm_settings_from(settings)
+    client = chat_client or (
+        lambda request_messages, request_settings: _openai_compatible_chat_with_schema(
+            request_messages,
+            request_settings,
+            schema_name=schema_name,
+            schema=schema,
+        )
+    )
+    content = client(messages, llm_settings)
+    try:
+        return _parse_json_object(content)
+    except ValueError:
+        repair_messages = messages + [
+            {
+                "role": "user",
+                "content": "Your previous response was not valid JSON. Return only one valid JSON object matching the requested schema.",
+            }
+        ]
+        return _parse_json_object(client(repair_messages, llm_settings))
+
+
+def _openai_compatible_chat_with_schema(
+    messages: list[dict[str, str]],
+    settings: LLMSettings,
+    *,
+    schema_name: str,
+    schema: dict[str, Any],
+) -> str:
     if settings.provider not in OPENAI_COMPATIBLE_PROVIDERS:
         raise ValueError(f"Unsupported LLM provider: {settings.provider}")
     base_url = settings.base_url.rstrip("/")
@@ -296,7 +341,7 @@ def _openai_compatible_chat(messages: list[dict[str, str]], settings: LLMSetting
     }
     if settings.reasoning_effort:
         request_body["reasoning_effort"] = settings.reasoning_effort
-    response_format = _llm_response_format(settings.response_format)
+    response_format = _llm_response_format(settings.response_format, schema_name=schema_name, schema=schema)
     if response_format:
         request_body["response_format"] = response_format
     request = urllib.request.Request(
@@ -353,7 +398,13 @@ def _llm_headers(settings: LLMSettings) -> dict[str, str]:
     return headers
 
 
-def _llm_response_format(value: str) -> dict[str, Any] | None:
+def _llm_response_format(
+    value: str,
+    *,
+    schema_name: str = "meeting_intelligence",
+    schema: dict[str, Any] | None = None,
+) -> dict[str, Any] | None:
+    schema = schema or MEETING_INTELLIGENCE_JSON_SCHEMA
     response_format = (value or "json_schema").strip().lower()
     if response_format in {"none", "off", "disabled"}:
         return None
@@ -365,8 +416,8 @@ def _llm_response_format(value: str) -> dict[str, Any] | None:
         return {
             "type": "json_schema",
             "json_schema": {
-                "name": "meeting_intelligence",
-                "schema": MEETING_INTELLIGENCE_JSON_SCHEMA,
+                "name": schema_name,
+                "schema": schema,
             },
         }
     raise ValueError(f"Unsupported MEETING_LLM_RESPONSE_FORMAT: {value}")

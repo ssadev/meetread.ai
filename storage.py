@@ -56,6 +56,7 @@ class MeetingStorage:
             "organizer": getattr(meeting, "organizer", ""),
             "audio_file": None,
             "audio_duration_seconds": 0,
+            "audio_silent_chunks": 0,
             "transcript_file": None,
             "total_lines": 0,
             "speakers_detected": [],

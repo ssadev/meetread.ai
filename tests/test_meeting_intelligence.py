@@ -11,6 +11,7 @@ from meeting_intelligence import (
     LLMSettings,
     RuleBasedMeetingIntelligenceProvider,
     create_meeting_intelligence_provider,
+    complete_llm_json,
     normalize_transcript_lines,
     _openai_compatible_chat,
     regenerate_meeting_intelligence,
@@ -325,6 +326,77 @@ class MeetingIntelligenceTests(unittest.TestCase):
 
         self.assertEqual(captured["body"]["response_format"]["type"], "json_schema")
         self.assertEqual(captured["body"]["response_format"]["json_schema"]["name"], "meeting_intelligence")
+
+    def test_complete_llm_json_uses_custom_schema_name(self):
+        captured = {}
+
+        class FakeResponse:
+            def __enter__(self):
+                return self
+
+            def __exit__(self, exc_type, exc, traceback):
+                return False
+
+            def read(self):
+                return json.dumps(
+                    {
+                        "choices": [
+                            {
+                                "message": {
+                                    "content": json.dumps(
+                                        {
+                                            "decision": "allow",
+                                            "button_label": "Continue",
+                                            "confidence": 0.9,
+                                            "reason": "safe",
+                                        }
+                                    )
+                                }
+                            }
+                        ]
+                    }
+                ).encode()
+
+        def fake_urlopen(request, timeout):
+            captured["body"] = json.loads(request.data.decode())
+            return FakeResponse()
+
+        schema = {
+            "type": "object",
+            "properties": {"decision": {"type": "string"}},
+            "required": ["decision"],
+        }
+        with patch("meeting_intelligence.urllib.request.urlopen", fake_urlopen):
+            result = complete_llm_json(
+                [{"role": "user", "content": "hello"}],
+                LLMSettings(),
+                schema_name="meet_dialog_blocker",
+                schema=schema,
+            )
+
+        self.assertEqual(result["decision"], "allow")
+        self.assertEqual(captured["body"]["response_format"]["json_schema"]["name"], "meet_dialog_blocker")
+
+    def test_complete_llm_json_retries_invalid_json_once(self):
+        calls = []
+
+        def fake_chat(messages, settings):
+            calls.append(messages)
+            if len(calls) == 1:
+                return "not json"
+            return json.dumps({"decision": "allow"})
+
+        result = complete_llm_json(
+            [{"role": "user", "content": "hello"}],
+            LLMSettings(),
+            schema_name="meet_dialog_blocker",
+            schema={"type": "object", "properties": {"decision": {"type": "string"}}},
+            chat_client=fake_chat,
+        )
+
+        self.assertEqual(result["decision"], "allow")
+        self.assertEqual(len(calls), 2)
+        self.assertIn("not valid JSON", calls[1][-1]["content"])
 
     def test_openai_compatible_request_can_use_text_response_format(self):
         captured = {}
