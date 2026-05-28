@@ -2,7 +2,7 @@
 
 MeetRead's objective is to become a full-fledged open-source, self-hosted alternative to hosted meeting assistants such as Read.ai and Fireflies for Google Meet. It is designed for individuals and organizations that want meeting capture, transcripts, summaries, action items, and integrations while keeping meeting data inside infrastructure they control.
 
-The current implementation joins Google Meet calls from Calendar, records routed audio, captures Meet-provided captions, generates local and LLM-backed meeting intelligence, and can deliver structured summary emails through SMTP. The roadmap below tracks the work required to evolve that capture bot into a production-ready meeting intelligence product.
+The current implementation joins Google Meet calls from Calendar, records routed audio, captures Meet-provided captions, generates local and LLM-backed meeting intelligence, and can deliver structured summary emails through SMTP. This is the base capture and R&D/POC layer, not yet a complete MVP product. The roadmap below tracks the work required to evolve that capture bot into a production-ready meeting intelligence product.
 
 ## Product Principles
 
@@ -27,6 +27,26 @@ The current implementation joins Google Meet calls from Calendar, records routed
 - [x] Detect explicit meeting end/removal states from Meet DOM text.
 - [x] Use Docker Compose with Chrome, Xvfb, PulseAudio, ffmpeg, and mounted state/secrets.
 - [x] Support macOS loopback recording through `sounddevice` and BlackHole.
+
+## Productisation Milestones
+
+- [ ] Define MVP scope separately from the current R&D/POC capture layer, including required user journeys, data model, permissions, and operational guarantees.
+- [ ] Introduce a persistent meeting/session model that separates a scheduled meeting, a live capture run, generated artifacts, and user access grants.
+- [ ] Add a workspace-aware product model with users, teams, roles, ownership, sharing defaults, and admin policies.
+- [ ] Add a capture orchestration service that can decide whether to launch a bot, reuse an active capture, attach a user to an existing meeting session, or skip capture based on policy.
+- [ ] Define product-level acceptance criteria for a meeting report: reliable capture, complete metadata, transcript availability, summary status, owner, access list, retention policy, and audit events.
+- [ ] Add migration guidance from local folder-only artifacts to the future database-backed meeting/session model.
+
+## Multi-User And Duplicate Capture Handling
+
+- [ ] Prevent duplicate bots for the same meeting within a workspace by using a shared meeting key derived from Meet URL, calendar event ID, conferencing ID, start time, and organizer where available.
+- [ ] Add a distributed lock or database-backed uniqueness constraint so only one capture worker can own a live meeting session across processes, containers, and machines.
+- [ ] When multiple users request capture for the same meeting, attach them as subscribers/editors/viewers to the same meeting session instead of launching separate bots.
+- [ ] Define deterministic report ownership rules, such as meeting organizer first, calendar event creator second, first requester third, then workspace role or account age as tie-breakers.
+- [ ] Support per-user notification and integration delivery from a shared meeting report without duplicating recording, transcription, or summarization work.
+- [ ] Apply workspace or owner-level sharing, retention, consent, and compliance policies consistently when multiple users requested the same capture.
+- [ ] Show duplicate-request state in the product UI, including who owns the report, who requested capture, whether the bot is already in the meeting, and who will receive access.
+- [ ] Add tests for duplicate meeting detection across calendar sync, manual join, worker restart, concurrent enqueue, and overlapping recurring meetings.
 
 ## Capture Reliability
 
