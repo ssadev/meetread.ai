@@ -246,9 +246,12 @@ MEETING_LLM_TIMEOUT_SECONDS=120
 MEETING_LLM_MAX_INPUT_CHARS=60000
 MEETING_LLM_RESPONSE_FORMAT=json_schema
 MEETING_LLM_FALLBACK_PROVIDER=rule_based
+MEET_DIALOG_LLM_ENABLED=true
 ```
 
 The `openai_compatible` LLM provider posts to `/chat/completions` and works with Ollama, LM Studio, vLLM, OpenAI, or any OpenAI-compatible gateway. `MEETING_LLM_API_KEY` can be empty for local providers. `MEETING_LLM_RESPONSE_FORMAT` defaults to `json_schema`; use `text` for gateways that do not support structured output, `json_object` for older servers, or `none` to omit the field. `MEETING_LLM_MAX_INPUT_CHARS` controls how much transcript text is sent per request; long transcripts are chunked automatically and results merged. If the LLM request fails or returns invalid JSON, `MEETING_LLM_FALLBACK_PROVIDER=rule_based` lets meeting finalization still produce local intelligence artifacts.
+
+When `MEETING_INTELLIGENCE_PROVIDER=llm` and `MEET_DIALOG_LLM_ENABLED=true`, MeetRead can use the same LLM provider to classify unknown Google Meet or plugin dialogs that block joining. Only visible dialog text and button labels are sent. Known-safe sharing prompts are handled locally first; unknown, low-confidence, or destructive prompts are not clicked and are recorded in `metadata.json` as join blocker diagnostics.
 
 **Sarvam AI** is also supported as an LLM provider:
 
