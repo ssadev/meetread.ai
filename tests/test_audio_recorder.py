@@ -10,12 +10,13 @@ import audio_recorder as module
 from audio_recorder import AudioRecorder
 
 
-def _write_wav(path: Path) -> None:
+def _write_wav(path: Path, sample: int = 1000) -> None:
+    frame = int(sample).to_bytes(2, "little", signed=True)
     with wave.open(str(path), "wb") as wav:
         wav.setnchannels(2)
         wav.setsampwidth(2)
         wav.setframerate(44100)
-        wav.writeframes(b"\x00\x00" * 100)
+        wav.writeframes(frame * 200)
 
 
 class AudioRecorderTests(unittest.TestCase):
@@ -49,7 +50,14 @@ class AudioRecorderTests(unittest.TestCase):
 
             self.assertFalse(AudioRecorder()._chunk_has_audio(chunk))
 
-    def test_wav_chunk_with_frames_is_counted_as_audio(self):
+    def test_silent_wav_chunk_is_not_counted_as_audio(self):
+        with TemporaryDirectory() as tmp:
+            chunk = Path(tmp) / "chunk.wav"
+            _write_wav(chunk, sample=0)
+
+            self.assertFalse(AudioRecorder()._chunk_has_audio(chunk))
+
+    def test_wav_chunk_with_signal_is_counted_as_audio(self):
         with TemporaryDirectory() as tmp:
             chunk = Path(tmp) / "chunk.wav"
             _write_wav(chunk)

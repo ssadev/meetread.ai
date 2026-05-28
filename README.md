@@ -225,7 +225,7 @@ meetings/{YYYY-MM-DD}_{sanitized_meeting_title}/
   bot.log
 ```
 
-Audio chunks are written to `audio_chunks/` while recording. After ffmpeg concatenates them successfully, the chunks folder is deleted when `DELETE_CHUNKS_AFTER_CONCAT=true`.
+Audio chunks are written to `audio_chunks/` while recording. Silent chunks are discarded and counted in `metadata.json` as `audio_silent_chunks`. After ffmpeg concatenates chunks with real signal successfully, the chunks folder is deleted when `DELETE_CHUNKS_AFTER_CONCAT=true`.
 
 Meeting intelligence runs after transcript finalization when `MEETING_INTELLIGENCE_ENABLED=true`. The current provider is `rule_based`, which creates deterministic local summaries, key points, decisions, risks, questions, blockers, topics, and action items without sending transcript data to an external service. The provider is selected with:
 

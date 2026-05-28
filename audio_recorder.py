@@ -4,9 +4,11 @@ import logging
 import queue
 import shutil
 import subprocess
+import sys
 import threading
 import time
 import wave
+from array import array
 from datetime import datetime
 from pathlib import Path
 from typing import Any
@@ -16,6 +18,7 @@ from storage import MeetingStorage
 
 
 LOGGER = logging.getLogger(__name__)
+MIN_AUDIO_PEAK = 64
 
 
 class AudioRecorder:
@@ -33,6 +36,7 @@ class AudioRecorder:
             "bytes_recorded": 0,
             "chunk_count": 0,
             "errors": [],
+            "silent_chunks": 0,
             "started_at": None,
             "finished_at": None,
             "audio_file": None,
@@ -125,6 +129,8 @@ class AudioRecorder:
                     )
                     chunk_index += 1
                 else:
+                    self._status["silent_chunks"] += 1
+                    LOGGER.warning("Discarding silent audio chunk: chunk=%s", chunk_path.name)
                     chunk_path.unlink(missing_ok=True)
 
     def _write_chunk(self, chunk_path: Path, audio_queue: queue.Queue[bytes], stop_event: threading.Event) -> None:
@@ -146,7 +152,10 @@ class AudioRecorder:
             return False
         try:
             with wave.open(str(chunk_path), "rb") as wav:
-                return wav.getnframes() > 0
+                frames = wav.readframes(wav.getnframes())
+                if not frames:
+                    return False
+                return _max_sample_peak(frames, wav.getsampwidth()) >= MIN_AUDIO_PEAK
         except wave.Error:
             return False
 
@@ -187,3 +196,13 @@ class AudioRecorder:
 
     def get_status(self) -> dict[str, Any]:
         return dict(self._status)
+
+
+def _max_sample_peak(frames: bytes, sample_width: int) -> int:
+    if sample_width != 2:
+        return max(frames) if frames else 0
+    samples = array("h")
+    samples.frombytes(frames)
+    if sys.byteorder != "little":
+        samples.byteswap()
+    return max((abs(sample) for sample in samples), default=0)

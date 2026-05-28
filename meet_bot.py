@@ -440,6 +440,9 @@ class MeetBot:
                 logger.warning("Meet join request was denied")
                 self._dump_debug_page(meeting_dir, "meet_join_denied")
                 return "denied"
+            if self._accept_post_join_consent_dialog(logger):
+                self._sleep(3)
+                continue
             if self._inside_meeting():
                 logger.info("Admitted to Google Meet")
                 return "joined"
@@ -590,6 +593,38 @@ class MeetBot:
         ]
         return any(marker in page for marker in waiting_markers)
 
+    def _blocking_join_dialog_detected(self) -> bool:
+        page = self._page_text().lower()
+        markers = [
+            "your call audio and video will be shared with",
+            "call audio and video will be shared with",
+        ]
+        return "join now" in page and any(marker in page for marker in markers)
+
+    def _accept_post_join_consent_dialog(self, logger: logging.Logger) -> bool:
+        if not self._blocking_join_dialog_detected():
+            return False
+        clicked = self._click_first(
+            [
+                (
+                    '//div[@role="dialog" and .//*[contains(., "call audio and video will be shared with")]]'
+                    '//span[normalize-space()="Join now"]/ancestor::button'
+                ),
+                (
+                    '//div[@role="dialog" and contains(., "call audio and video will be shared with")]'
+                    '//button[contains(., "Join now")]'
+                ),
+                '//span[normalize-space()="Join now"]/ancestor::button',
+                '//button[contains(., "Join now")]',
+            ],
+            timeout=5,
+        )
+        if clicked:
+            logger.info("Accepted post-join Meet consent dialog")
+            return True
+        logger.warning("Post-join Meet consent dialog is visible, but its Join now button could not be clicked")
+        return False
+
     def _finish(
         self,
         meeting_dir: Path,
@@ -615,7 +650,10 @@ class MeetBot:
             duration_seconds=int((leave_time - joined_at).total_seconds()) if joined_at else 0,
             audio_file=audio_status.get("audio_file"),
             audio_duration_seconds=audio.get_duration_seconds(),
+            audio_silent_chunks=audio_status.get("silent_chunks", 0),
         )
+        if audio_status.get("errors"):
+            metadata["audio_errors"] = audio_status["errors"]
         if audio_status.get("mp3_file"):
             metadata["audio_mp3_file"] = audio_status["mp3_file"]
         metadata.update(self._send_summary_email(meeting_dir, metadata))
@@ -730,7 +768,7 @@ class MeetBot:
                 self._click_first([f'button[aria-label*="Turn on {label}" i]'], timeout=3)
 
     def _inside_meeting(self) -> bool:
-        if self._join_denied_detected() or self._waiting_for_host_detected():
+        if self._join_denied_detected() or self._waiting_for_host_detected() or self._blocking_join_dialog_detected():
             return False
         in_call_controls = [
             'button[aria-label*="Leave call" i]',

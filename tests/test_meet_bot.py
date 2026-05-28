@@ -166,6 +166,30 @@ class MeetBotPlatformTests(unittest.TestCase):
 
         self.assertTrue(bot._inside_meeting())
 
+    def test_post_join_consent_dialog_is_not_inside_meeting(self):
+        leave_button = FakeElement()
+        bot = MeetBot.__new__(MeetBot)
+        bot.driver = FakeDriver(
+            {'button[aria-label*="Leave call" i]': [leave_button]},
+            visible_text="Your call audio and video will be shared with Read AI Join now",
+        )
+
+        self.assertTrue(bot._blocking_join_dialog_detected())
+        self.assertFalse(bot._inside_meeting())
+
+    def test_post_join_consent_dialog_can_be_accepted(self):
+        join_button = FakeElement()
+        bot = MeetBot.__new__(MeetBot)
+        bot.driver = FakeDriver(
+            {'//span[normalize-space()="Join now"]/ancestor::button': [join_button]},
+            visible_text="Your call audio and video will be shared with Read AI Join now",
+        )
+        logger = logging.getLogger("test")
+        logger.disabled = True
+
+        self.assertTrue(bot._accept_post_join_consent_dialog(logger))
+        self.assertTrue(join_button.clicked)
+
     def test_waiting_for_host_page_is_not_inside_meeting(self):
         leave_button = FakeElement()
         bot = MeetBot.__new__(MeetBot)
