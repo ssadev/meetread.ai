@@ -61,8 +61,6 @@ class Settings:
     delete_chunks_after_concat: bool
     seen_meetings_path: Path
     bot_session_path: Path
-    audio_backend: str
-    audio_input_device: str | None
     audio_samplerate: int
     audio_channels: int
     audio_chunk_seconds: int
@@ -117,8 +115,6 @@ def get_settings(env_path: str | Path = ".env") -> Settings:
         delete_chunks_after_concat=_bool_env("DELETE_CHUNKS_AFTER_CONCAT", True),
         seen_meetings_path=Path(os.getenv("SEEN_MEETINGS_PATH", "./seen_meetings.json")),
         bot_session_path=Path(os.getenv("BOT_SESSION_PATH", "./bot_session.pkl")),
-        audio_backend=os.getenv("AUDIO_BACKEND", "auto").lower(),
-        audio_input_device=os.getenv("AUDIO_INPUT_DEVICE") or None,
         audio_samplerate=int(os.getenv("AUDIO_SAMPLERATE", "44100")),
         audio_channels=int(os.getenv("AUDIO_CHANNELS", "2")),
         audio_chunk_seconds=int(os.getenv("AUDIO_CHUNK_SECONDS", "60")),

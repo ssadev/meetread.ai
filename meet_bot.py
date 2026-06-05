@@ -167,12 +167,11 @@ class MeetBot:
 
         try:
             logger.info(
-                "Meeting bot run started: title=%s url=%s start_time=%s end_time=%s audio_backend=%s",
+                "Meeting bot run started: title=%s url=%s start_time=%s end_time=%s",
                 getattr(meeting, "meeting_title", getattr(meeting, "title", "")),
                 getattr(meeting, "meet_url", ""),
                 getattr(meeting, "start_time", None),
                 getattr(meeting, "end_time", None),
-                self.settings.audio_backend,
             )
             if self._uses_pulseaudio():
                 self.pulse_sink = PulseAudioSink(sink_name)
@@ -182,10 +181,7 @@ class MeetBot:
                 except FileNotFoundError:
                     audio_enabled = False
                     audio.record_error("pactl not found; PulseAudio recording disabled")
-                    logger.warning(
-                        "pactl was not found, so PulseAudio recording is disabled. "
-                        "Set AUDIO_BACKEND=sounddevice on macOS and configure AUDIO_INPUT_DEVICE."
-                    )
+                    logger.warning("pactl was not found; PulseAudio recording is disabled.")
                 except Exception as exc:
                     audio_enabled = False
                     audio.record_error(f"PulseAudio setup failed: {exc}")
@@ -308,27 +304,9 @@ class MeetBot:
                 LOGGER.debug("Could not block %s permission through Chrome DevTools", permission, exc_info=True)
 
     def _create_audio_recorder(self, sink_name: str) -> AudioRecorder:
-        if self._uses_pulseaudio():
-            return AudioRecorder(sink_name=sink_name, settings=self.settings, device="pulse")
-        return AudioRecorder(sink_name=sink_name, settings=self.settings, device=self.settings.audio_input_device)
+        return AudioRecorder(sink_name=sink_name, settings=self.settings, device="pulse")
 
-    def _uses_pulseaudio(self) -> bool:
-        if self.settings.audio_backend == "pulseaudio":
-            return True
-        if self.settings.audio_backend == "sounddevice":
-            return False
-        return platform.system() == "Linux"
-
-    def _audio_capture_available(self, audio: AudioRecorder, logger: logging.Logger) -> bool:
-        if self._uses_pulseaudio():
-            return True
-        if platform.system() == "Darwin" and not self.settings.audio_input_device:
-            audio.record_error("AUDIO_INPUT_DEVICE is not set; macOS loopback recording disabled")
-            logger.warning(
-                "macOS audio capture needs a loopback input. Install BlackHole and set "
-                "AUDIO_INPUT_DEVICE='BlackHole 2ch' in .env. Captions will still be captured."
-            )
-            return False
+    def _audio_capture_available(self, audio: AudioRecorder, logger: logging.Logger) -> bool:  # noqa: ARG002
         return True
 
     def _chrome_version_main(self) -> int | None:
@@ -344,16 +322,7 @@ class MeetBot:
         candidates = []
         if getattr(self.settings, "chrome_binary_path", None):
             candidates.append(self.settings.chrome_binary_path)
-        if platform.system() == "Darwin":
-            candidates.extend(
-                [
-                    "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
-                    str(Path.home() / "Applications/Google Chrome.app/Contents/MacOS/Google Chrome"),
-                    "/Applications/Chromium.app/Contents/MacOS/Chromium",
-                ]
-            )
-        else:
-            candidates.extend(["google-chrome", "google-chrome-stable", "chromium", "chromium-browser"])
+        candidates.extend(["google-chrome", "google-chrome-stable", "chromium", "chromium-browser"])
 
         for candidate in candidates:
             executable = candidate if Path(candidate).exists() else shutil.which(candidate)
