@@ -1,0 +1,853 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>MeetRead — Self-Hosted Meeting Intelligence</title>
+  <meta name="description" content="Open-source, self-hosted Google Meet capture and intelligence. Audio, transcripts, summaries — all on your own infrastructure." />
+  <style>
+    :root {
+      --bg: #0d0f14;
+      --bg2: #13161e;
+      --bg3: #1a1e28;
+      --border: #252932;
+      --accent: #4f8ef7;
+      --accent2: #7c5cfc;
+      --green: #22d3a0;
+      --text: #e8eaf0;
+      --muted: #7a7f8e;
+      --code-bg: #0a0c10;
+      --radius: 10px;
+    }
+
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+
+    html { scroll-behavior: smooth; }
+
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Inter", sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      line-height: 1.6;
+    }
+
+    a { color: var(--accent); text-decoration: none; }
+    a:hover { text-decoration: underline; }
+
+    /* ── NAV ─────────────────────────────────── */
+    nav {
+      position: sticky;
+      top: 0;
+      z-index: 100;
+      background: rgba(13,15,20,.88);
+      backdrop-filter: blur(14px);
+      border-bottom: 1px solid var(--border);
+      padding: 0 2rem;
+      height: 60px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+    }
+
+    .nav-logo {
+      display: flex;
+      align-items: center;
+      gap: .6rem;
+      font-weight: 700;
+      font-size: 1.1rem;
+      color: var(--text);
+      text-decoration: none;
+    }
+
+    .nav-logo .dot { color: var(--accent); }
+
+    .nav-links {
+      display: flex;
+      gap: 1.6rem;
+      list-style: none;
+    }
+
+    .nav-links a {
+      font-size: .875rem;
+      color: var(--muted);
+      transition: color .15s;
+    }
+    .nav-links a:hover { color: var(--text); text-decoration: none; }
+
+    .nav-cta {
+      background: var(--accent);
+      color: #fff !important;
+      padding: .35rem .9rem;
+      border-radius: 6px;
+      font-weight: 600;
+      transition: opacity .15s;
+    }
+    .nav-cta:hover { opacity: .85; text-decoration: none !important; }
+
+    /* ── HERO ────────────────────────────────── */
+    .hero {
+      max-width: 860px;
+      margin: 0 auto;
+      padding: 7rem 2rem 5rem;
+      text-align: center;
+    }
+
+    .badge {
+      display: inline-flex;
+      align-items: center;
+      gap: .45rem;
+      background: rgba(79,142,247,.12);
+      border: 1px solid rgba(79,142,247,.3);
+      color: var(--accent);
+      font-size: .78rem;
+      font-weight: 600;
+      letter-spacing: .04em;
+      text-transform: uppercase;
+      padding: .3rem .8rem;
+      border-radius: 999px;
+      margin-bottom: 1.8rem;
+    }
+
+    .badge-dot {
+      width: 6px; height: 6px;
+      border-radius: 50%;
+      background: var(--green);
+      animation: pulse 2s infinite;
+    }
+
+    @keyframes pulse {
+      0%, 100% { opacity: 1; transform: scale(1); }
+      50% { opacity: .5; transform: scale(1.4); }
+    }
+
+    .hero h1 {
+      font-size: clamp(2.4rem, 6vw, 4rem);
+      font-weight: 800;
+      line-height: 1.12;
+      letter-spacing: -.02em;
+      margin-bottom: 1.4rem;
+    }
+
+    .hero h1 .grad {
+      background: linear-gradient(120deg, var(--accent), var(--accent2));
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+      background-clip: text;
+    }
+
+    .hero p {
+      font-size: 1.15rem;
+      color: var(--muted);
+      max-width: 600px;
+      margin: 0 auto 2.4rem;
+    }
+
+    .hero-actions {
+      display: flex;
+      gap: 1rem;
+      justify-content: center;
+      flex-wrap: wrap;
+    }
+
+    .btn {
+      display: inline-flex;
+      align-items: center;
+      gap: .5rem;
+      padding: .7rem 1.5rem;
+      border-radius: var(--radius);
+      font-size: .95rem;
+      font-weight: 600;
+      transition: all .15s;
+      cursor: pointer;
+      border: none;
+    }
+
+    .btn-primary {
+      background: var(--accent);
+      color: #fff;
+    }
+    .btn-primary:hover { opacity: .88; text-decoration: none; }
+
+    .btn-ghost {
+      background: transparent;
+      color: var(--text);
+      border: 1px solid var(--border);
+    }
+    .btn-ghost:hover { background: var(--bg3); text-decoration: none; }
+
+    /* ── TERMINAL PREVIEW ────────────────────── */
+    .terminal-wrap {
+      max-width: 720px;
+      margin: 3.5rem auto 0;
+    }
+
+    .terminal {
+      background: var(--code-bg);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      overflow: hidden;
+      text-align: left;
+    }
+
+    .terminal-bar {
+      display: flex;
+      align-items: center;
+      gap: .4rem;
+      padding: .7rem 1rem;
+      background: var(--bg3);
+      border-bottom: 1px solid var(--border);
+    }
+
+    .terminal-bar span {
+      width: 12px; height: 12px;
+      border-radius: 50%;
+    }
+    .t-close { background: #ff5f57; }
+    .t-min   { background: #febc2e; }
+    .t-max   { background: #28c840; }
+    .terminal-title {
+      margin-left: .5rem;
+      font-size: .78rem;
+      color: var(--muted);
+    }
+
+    .terminal-body {
+      padding: 1.2rem 1.4rem;
+      font-family: "SF Mono", "Fira Code", "Cascadia Code", monospace;
+      font-size: .82rem;
+      line-height: 1.9;
+    }
+
+    .t-cmd  { color: var(--green); }
+    .t-comm { color: var(--muted); }
+    .t-out  { color: #8eaaff; }
+    .t-warn { color: #f4b042; }
+    .t-info { color: var(--text); opacity: .8; }
+    .t-acc  { color: var(--green); font-weight: 700; }
+
+    /* ── SECTION ─────────────────────────────── */
+    section { padding: 5rem 2rem; }
+
+    .section-inner {
+      max-width: 1080px;
+      margin: 0 auto;
+    }
+
+    .section-label {
+      font-size: .75rem;
+      font-weight: 700;
+      letter-spacing: .1em;
+      text-transform: uppercase;
+      color: var(--accent);
+      margin-bottom: .6rem;
+    }
+
+    .section-title {
+      font-size: clamp(1.7rem, 4vw, 2.4rem);
+      font-weight: 800;
+      letter-spacing: -.02em;
+      margin-bottom: .8rem;
+    }
+
+    .section-desc {
+      color: var(--muted);
+      max-width: 560px;
+      font-size: 1rem;
+      margin-bottom: 3rem;
+    }
+
+    /* ── FEATURES GRID ───────────────────────── */
+    .features-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+      gap: 1.2rem;
+    }
+
+    .feat-card {
+      background: var(--bg2);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 1.4rem 1.6rem;
+      transition: border-color .2s, transform .2s;
+    }
+    .feat-card:hover {
+      border-color: rgba(79,142,247,.35);
+      transform: translateY(-2px);
+    }
+
+    .feat-icon {
+      font-size: 1.4rem;
+      margin-bottom: .8rem;
+    }
+
+    .feat-title {
+      font-weight: 700;
+      font-size: .95rem;
+      margin-bottom: .4rem;
+    }
+
+    .feat-desc {
+      font-size: .85rem;
+      color: var(--muted);
+      line-height: 1.55;
+    }
+
+    /* ── HOW IT WORKS ────────────────────────── */
+    .steps {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+      gap: 1rem;
+      counter-reset: step;
+    }
+
+    .step-card {
+      background: var(--bg2);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 1.5rem;
+      counter-increment: step;
+      position: relative;
+    }
+
+    .step-card::before {
+      content: counter(step, decimal-leading-zero);
+      position: absolute;
+      top: 1rem; right: 1.2rem;
+      font-size: 2rem;
+      font-weight: 900;
+      color: rgba(79,142,247,.08);
+      line-height: 1;
+    }
+
+    .step-icon { font-size: 1.3rem; margin-bottom: .6rem; }
+
+    .step-title {
+      font-weight: 700;
+      font-size: .9rem;
+      margin-bottom: .3rem;
+    }
+
+    .step-desc {
+      font-size: .82rem;
+      color: var(--muted);
+    }
+
+    /* ── OUTPUT FILES ────────────────────────── */
+    .files-block {
+      background: var(--code-bg);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 1.4rem 1.6rem;
+      font-family: "SF Mono", "Fira Code", monospace;
+      font-size: .82rem;
+      line-height: 2;
+    }
+
+    .files-block .dir  { color: var(--accent); font-weight: 700; }
+    .files-block .file { color: var(--text); }
+    .files-block .desc { color: var(--muted); }
+    .files-block .ind  { color: var(--muted); user-select: none; }
+
+    /* ── PROVIDERS ───────────────────────────── */
+    .providers-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
+      gap: 1.1rem;
+    }
+
+    .provider-card {
+      background: var(--bg2);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 1.3rem 1.4rem;
+      display: flex;
+      gap: 1rem;
+      align-items: flex-start;
+    }
+
+    .provider-icon {
+      width: 40px; height: 40px;
+      border-radius: 8px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 1.2rem;
+      flex-shrink: 0;
+    }
+
+    .p-local { background: rgba(34,211,160,.1); }
+    .p-openai { background: rgba(79,142,247,.1); }
+    .p-ollama { background: rgba(124,92,252,.1); }
+    .p-sarvam { background: rgba(244,176,66,.1); }
+
+    .provider-info .name {
+      font-weight: 700;
+      font-size: .9rem;
+      margin-bottom: .2rem;
+    }
+    .provider-info .desc {
+      font-size: .8rem;
+      color: var(--muted);
+    }
+
+    .tag-local {
+      display: inline-block;
+      background: rgba(34,211,160,.12);
+      color: var(--green);
+      font-size: .7rem;
+      font-weight: 700;
+      padding: .1rem .45rem;
+      border-radius: 4px;
+      margin-top: .3rem;
+    }
+
+    /* ── DEPLOY ──────────────────────────────── */
+    .deploy-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+      gap: 1.2rem;
+    }
+
+    .deploy-card {
+      background: var(--bg2);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 1.5rem;
+    }
+
+    .deploy-card h3 {
+      font-size: 1rem;
+      font-weight: 700;
+      margin-bottom: .6rem;
+      display: flex;
+      align-items: center;
+      gap: .5rem;
+    }
+
+    .deploy-card p {
+      font-size: .84rem;
+      color: var(--muted);
+      margin-bottom: 1rem;
+    }
+
+    .deploy-code {
+      background: var(--code-bg);
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      padding: .7rem 1rem;
+      font-family: "SF Mono", "Fira Code", monospace;
+      font-size: .78rem;
+      color: var(--green);
+      overflow-x: auto;
+    }
+
+    .rec-tag {
+      display: inline-block;
+      background: rgba(34,211,160,.12);
+      color: var(--green);
+      font-size: .68rem;
+      font-weight: 700;
+      padding: .1rem .4rem;
+      border-radius: 4px;
+      text-transform: uppercase;
+      letter-spacing: .05em;
+    }
+
+    /* ── DIVIDER ─────────────────────────────── */
+    .divider {
+      border: none;
+      border-top: 1px solid var(--border);
+      margin: 0;
+    }
+
+    /* ── CTA BANNER ──────────────────────────── */
+    .cta-section {
+      background: var(--bg2);
+      border-top: 1px solid var(--border);
+      border-bottom: 1px solid var(--border);
+      padding: 5rem 2rem;
+      text-align: center;
+    }
+
+    .cta-section h2 {
+      font-size: clamp(1.6rem, 4vw, 2.4rem);
+      font-weight: 800;
+      letter-spacing: -.02em;
+      margin-bottom: .8rem;
+    }
+
+    .cta-section p {
+      color: var(--muted);
+      max-width: 480px;
+      margin: 0 auto 2rem;
+    }
+
+    /* ── FOOTER ──────────────────────────────── */
+    footer {
+      max-width: 1080px;
+      margin: 0 auto;
+      padding: 2.5rem 2rem;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      flex-wrap: wrap;
+      gap: 1rem;
+    }
+
+    .footer-logo {
+      font-weight: 700;
+      font-size: .95rem;
+      color: var(--muted);
+    }
+
+    .footer-links {
+      display: flex;
+      gap: 1.4rem;
+      list-style: none;
+    }
+
+    .footer-links a {
+      font-size: .82rem;
+      color: var(--muted);
+    }
+    .footer-links a:hover { color: var(--text); }
+
+    .footer-note {
+      font-size: .78rem;
+      color: var(--muted);
+    }
+
+    /* ── RESPONSIVE ──────────────────────────── */
+    @media (max-width: 640px) {
+      nav { padding: 0 1rem; }
+      .nav-links { display: none; }
+      section { padding: 3.5rem 1rem; }
+      .hero { padding: 4rem 1rem 3rem; }
+      footer { flex-direction: column; align-items: flex-start; }
+    }
+  </style>
+</head>
+<body>
+
+<!-- ── NAV ────────────────────────────────── -->
+<nav>
+  <a href="#" class="nav-logo">
+    Meet<span class="dot">Read</span>
+  </a>
+  <ul class="nav-links">
+    <li><a href="#features">Features</a></li>
+    <li><a href="#how-it-works">How it works</a></li>
+    <li><a href="#intelligence">Intelligence</a></li>
+    <li><a href="#deploy">Deploy</a></li>
+    <li><a href="https://github.com/ssadev/meetread.ai" class="nav-cta">GitHub →</a></li>
+  </ul>
+</nav>
+
+<!-- ── HERO ───────────────────────────────── -->
+<div class="hero">
+  <div class="badge">
+    <span class="badge-dot"></span>
+    Open Source · Self-Hosted · Privacy First
+  </div>
+  <h1>
+    Meeting intelligence<br/>
+    <span class="grad">on your infrastructure</span>
+  </h1>
+  <p>
+    MeetRead joins your Google Meet calls, records audio, captures transcripts,
+    and generates summaries — without sending your data anywhere you don't control.
+  </p>
+  <div class="hero-actions">
+    <a href="https://github.com/ssadev/meetread.ai" class="btn btn-primary">
+      ⭐ Star on GitHub
+    </a>
+    <a href="#deploy" class="btn btn-ghost">
+      Get started →
+    </a>
+  </div>
+
+  <div class="terminal-wrap">
+    <div class="terminal">
+      <div class="terminal-bar">
+        <span class="t-close"></span>
+        <span class="t-min"></span>
+        <span class="t-max"></span>
+        <span class="terminal-title">meetread — docker compose</span>
+      </div>
+      <div class="terminal-body">
+        <div><span class="t-comm"># One-command Docker start</span></div>
+        <div><span class="t-cmd">$</span> docker compose up --build</div>
+        <div>&nbsp;</div>
+        <div><span class="t-out">[MeetRead]</span> <span class="t-info">Calendar polling active — interval 300s</span></div>
+        <div><span class="t-out">[MeetRead]</span> <span class="t-info">Upcoming event: Weekly Sync @ 14:00</span></div>
+        <div><span class="t-out">[MeetRead]</span> <span class="t-info">Joining meet.google.com/abc-defg-hij ...</span></div>
+        <div><span class="t-out">[MeetRead]</span> <span class="t-warn">Waiting in lobby — admitted by host</span></div>
+        <div><span class="t-out">[MeetRead]</span> <span class="t-acc">Recording started ✓ — audio + captions</span></div>
+        <div><span class="t-out">[MeetRead]</span> <span class="t-info">Meeting ended. Finalizing artifacts ...</span></div>
+        <div><span class="t-out">[MeetRead]</span> <span class="t-acc">Intelligence generated → meeting_intelligence.md</span></div>
+        <div><span class="t-out">[MeetRead]</span> <span class="t-acc">Summary email sent ✓</span></div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<hr class="divider" />
+
+<!-- ── FEATURES ────────────────────────────── -->
+<section id="features">
+  <div class="section-inner">
+    <div class="section-label">Features</div>
+    <h2 class="section-title">Everything Read.ai does,<br/>on a server you own</h2>
+    <p class="section-desc">
+      No SaaS subscriptions. No data leaving your infrastructure. Full control over every meeting artifact.
+    </p>
+
+    <div class="features-grid">
+      <div class="feat-card">
+        <div class="feat-icon">📅</div>
+        <div class="feat-title">Calendar-driven automation</div>
+        <div class="feat-desc">Polls Google Calendar, auto-joins scheduled Google Meet events within your configured buffer window.</div>
+      </div>
+      <div class="feat-card">
+        <div class="feat-icon">🎙️</div>
+        <div class="feat-title">System audio recording</div>
+        <div class="feat-desc">PulseAudio null-sink on Linux/Docker, BlackHole on macOS. WAV chunks concatenated to final WAV + MP3 via ffmpeg.</div>
+      </div>
+      <div class="feat-card">
+        <div class="feat-icon">📝</div>
+        <div class="feat-title">Live caption scraping</div>
+        <div class="feat-desc">DOM polling captures Google Meet's live captions in real time. Deduplication cleans repeated incremental entries.</div>
+      </div>
+      <div class="feat-card">
+        <div class="feat-icon">🤖</div>
+        <div class="feat-title">Meeting intelligence</div>
+        <div class="feat-desc">Local rule-based summaries by default. Optional LLM providers — Ollama, OpenAI, Sarvam AI, any OpenAI-compatible API.</div>
+      </div>
+      <div class="feat-card">
+        <div class="feat-icon">📧</div>
+        <div class="feat-title">SMTP email delivery</div>
+        <div class="feat-desc">Rich HTML summary emails with plain-text fallback, delivered via your own SMTP server after every meeting.</div>
+      </div>
+      <div class="feat-card">
+        <div class="feat-icon">🔗</div>
+        <div class="feat-title">Manual join by URL</div>
+        <div class="feat-desc">No calendar needed. Pass a Meet URL directly with optional title, duration, end-time, or <code>--background</code> detach flag.</div>
+      </div>
+      <div class="feat-card">
+        <div class="feat-icon">🛡️</div>
+        <div class="feat-title">Privacy by default</div>
+        <div class="feat-desc">Audio, transcripts, and summaries stay local. External providers are opt-in adapters, never required for core function.</div>
+      </div>
+      <div class="feat-card">
+        <div class="feat-icon">🔁</div>
+        <div class="feat-title">Reprocessing support</div>
+        <div class="feat-desc">Regenerate intelligence or resend summary email for any existing meeting folder without re-joining the call.</div>
+      </div>
+      <div class="feat-card">
+        <div class="feat-icon">🧪</div>
+        <div class="feat-title">Test suite</div>
+        <div class="feat-desc">pytest suite mocking browser and audio boundaries. CI-friendly. No real credentials needed for unit tests.</div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<hr class="divider" />
+
+<!-- ── HOW IT WORKS ────────────────────────── -->
+<section id="how-it-works">
+  <div class="section-inner">
+    <div class="section-label">How it works</div>
+    <h2 class="section-title">From calendar event<br/>to intelligence artifact</h2>
+    <p class="section-desc">
+      MeetRead runs as a daemon, watching your calendar and handling the full meeting lifecycle automatically.
+    </p>
+
+    <div class="steps">
+      <div class="step-card">
+        <div class="step-icon">📅</div>
+        <div class="step-title">Calendar watch</div>
+        <div class="step-desc">Polls Google Calendar every 5 min. Detects upcoming Meet events within join buffer.</div>
+      </div>
+      <div class="step-card">
+        <div class="step-icon">🌐</div>
+        <div class="step-title">Browser join</div>
+        <div class="step-desc">Launches Chrome via undetected ChromeDriver. Signs in, enables captions, blocks camera/mic permissions.</div>
+      </div>
+      <div class="step-card">
+        <div class="step-icon">🚪</div>
+        <div class="step-title">Lobby admission</div>
+        <div class="step-desc">Waits for host to admit the bot. Configurable timeout. Handles plugin dialogs with LLM classification.</div>
+      </div>
+      <div class="step-card">
+        <div class="step-icon">⏺️</div>
+        <div class="step-title">Parallel capture</div>
+        <div class="step-desc">AudioRecorder + CaptionScraper run in parallel threads. Stop on meeting-end detection or removal.</div>
+      </div>
+      <div class="step-card">
+        <div class="step-icon">🧠</div>
+        <div class="step-title">Intelligence</div>
+        <div class="step-desc">Transcript normalized → rule-based or LLM analysis → JSON + Markdown artifacts written to disk.</div>
+      </div>
+      <div class="step-card">
+        <div class="step-icon">📬</div>
+        <div class="step-title">Delivery</div>
+        <div class="step-desc">Optional SMTP summary email. Status recorded in metadata.json. Failures don't affect capture artifacts.</div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<hr class="divider" />
+
+<!-- ── OUTPUT ──────────────────────────────── -->
+<section>
+  <div class="section-inner">
+    <div class="section-label">Output</div>
+    <h2 class="section-title">Every meeting, fully archived</h2>
+    <p class="section-desc">
+      Each call gets its own folder with every artifact you need — audio, transcripts, intelligence, and logs.
+    </p>
+
+    <div class="files-block">
+      <div><span class="dir">meetings/2026-06-05_Weekly-Sync/</span></div>
+      <div><span class="ind">├── </span><span class="file">metadata.json</span>       <span class="desc"># title, timestamps, attendees, status, email delivery</span></div>
+      <div><span class="ind">├── </span><span class="file">audio_raw.wav</span>        <span class="desc"># full meeting audio (WAV)</span></div>
+      <div><span class="ind">├── </span><span class="file">audio_raw.mp3</span>        <span class="desc"># compressed MP3 (ffmpeg)</span></div>
+      <div><span class="ind">├── </span><span class="file">transcript_live.json</span> <span class="desc"># raw captions as scraped</span></div>
+      <div><span class="ind">├── </span><span class="file">transcript_final.json</span><span class="desc"># deduplicated, normalized</span></div>
+      <div><span class="ind">├── </span><span class="file">transcript_final.txt</span> <span class="desc"># plain text transcript</span></div>
+      <div><span class="ind">├── </span><span class="file">meeting_intelligence.json</span> <span class="desc"># structured: summary, actions, decisions, risks …</span></div>
+      <div><span class="ind">├── </span><span class="file">meeting_intelligence.md</span>  <span class="desc"># human-readable intelligence report</span></div>
+      <div><span class="ind">└── </span><span class="file">bot.log</span>              <span class="desc"># full debug log for this meeting</span></div>
+    </div>
+  </div>
+</section>
+
+<hr class="divider" />
+
+<!-- ── INTELLIGENCE ────────────────────────── -->
+<section id="intelligence">
+  <div class="section-inner">
+    <div class="section-label">Intelligence</div>
+    <h2 class="section-title">Local by default,<br/>AI when you want it</h2>
+    <p class="section-desc">
+      Rule-based provider works offline with no API keys. Swap in any OpenAI-compatible LLM with one env var.
+    </p>
+
+    <div class="providers-grid">
+      <div class="provider-card">
+        <div class="provider-icon p-local">⚡</div>
+        <div class="provider-info">
+          <div class="name">Rule-based (default)</div>
+          <div class="desc">Regex patterns for decisions, risks, blockers, actions, questions, topics. No external calls.</div>
+          <span class="tag-local">100% Local</span>
+        </div>
+      </div>
+      <div class="provider-card">
+        <div class="provider-icon p-ollama">🦙</div>
+        <div class="provider-info">
+          <div class="name">Ollama / LM Studio</div>
+          <div class="desc">Self-hosted LLMs via OpenAI-compatible API. Llama 3, Mistral, Phi — full privacy.</div>
+          <span class="tag-local">Self-Hosted</span>
+        </div>
+      </div>
+      <div class="provider-card">
+        <div class="provider-icon p-openai">🤖</div>
+        <div class="provider-info">
+          <div class="name">OpenAI / vLLM</div>
+          <div class="desc">GPT-4o, Claude via proxy, or any OpenAI-compatible gateway. json_schema structured output.</div>
+        </div>
+      </div>
+      <div class="provider-card">
+        <div class="provider-icon p-sarvam">🌟</div>
+        <div class="provider-info">
+          <div class="name">Sarvam AI</div>
+          <div class="desc">Native Sarvam provider with reasoning_effort support. Ideal for Indian language meetings.</div>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<hr class="divider" />
+
+<!-- ── DEPLOY ──────────────────────────────── -->
+<section id="deploy">
+  <div class="section-inner">
+    <div class="section-label">Deploy</div>
+    <h2 class="section-title">Run anywhere</h2>
+    <p class="section-desc">Docker Compose is the quickest path. macOS and bare Linux are also fully supported.</p>
+
+    <div class="deploy-grid">
+      <div class="deploy-card">
+        <h3>🐳 Docker <span class="rec-tag">Recommended</span></h3>
+        <p>Chrome + Xvfb + PulseAudio + ffmpeg bundled. Mount secrets and go.</p>
+        <div class="deploy-code">
+          cp .env.docker.example .env.docker<br/>
+          # fill BOT_GOOGLE_ACCOUNT_EMAIL<br/>
+          docker compose up --build
+        </div>
+      </div>
+      <div class="deploy-card">
+        <h3>🍎 macOS</h3>
+        <p>BlackHole loopback + persistent Chrome profile. No PulseAudio needed.</p>
+        <div class="deploy-code">
+          brew install blackhole-2ch ffmpeg<br/>
+          cp .env.example .env<br/>
+          python main.py
+        </div>
+      </div>
+      <div class="deploy-card">
+        <h3>🐧 Linux (bare)</h3>
+        <p>PulseAudio + Xvfb + Chrome. Works with systemd for production.</p>
+        <div class="deploy-code">
+          python3.11 -m venv .venv<br/>
+          . .venv/bin/activate<br/>
+          pip install -r requirements.txt<br/>
+          python main.py
+        </div>
+      </div>
+      <div class="deploy-card">
+        <h3>🔗 Manual join</h3>
+        <p>Skip the calendar. Join any Meet URL directly, optionally detaching to background.</p>
+        <div class="deploy-code">
+          python join_meeting.py \<br/>
+          &nbsp;&nbsp;"https://meet.google.com/abc" \<br/>
+          &nbsp;&nbsp;--title "Quick Sync" --background
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<hr class="divider" />
+
+<!-- ── CTA ─────────────────────────────────── -->
+<div class="cta-section">
+  <h2>Own your meeting data</h2>
+  <p>No subscriptions. No third-party storage. Deploy in minutes with Docker Compose.</p>
+  <div style="display:flex; gap:1rem; justify-content:center; flex-wrap:wrap;">
+    <a href="https://github.com/ssadev/meetread.ai" class="btn btn-primary">
+      View on GitHub →
+    </a>
+    <a href="https://github.com/ssadev/meetread.ai/blob/main/README.md" class="btn btn-ghost">
+      Read the docs
+    </a>
+  </div>
+</div>
+
+<!-- ── FOOTER ──────────────────────────────── -->
+<footer>
+  <span class="footer-logo">MeetRead</span>
+  <ul class="footer-links">
+    <li><a href="https://github.com/ssadev/meetread.ai">GitHub</a></li>
+    <li><a href="https://github.com/ssadev/meetread.ai/blob/main/README.md">Docs</a></li>
+    <li><a href="https://github.com/ssadev/meetread.ai/blob/main/ROADMAP.md">Roadmap</a></li>
+    <li><a href="https://github.com/ssadev/meetread.ai/issues">Issues</a></li>
+  </ul>
+  <span class="footer-note">MIT License · Open Source</span>
+</footer>
+
+</body>
+</html>
