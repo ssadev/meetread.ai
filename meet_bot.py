@@ -98,7 +98,7 @@ class PulseAudioSink:
 
     def _set_audio_env(self) -> None:
         # ALSA's pulse plugin and Chrome both honor these variables. Setting them here keeps
-        # browser playback and the sounddevice capture stream on the same per-meeting sink.
+        # browser playback and the sounddevice capture stream share the same per-meeting PulseAudio sink.
         updates = {
             "PULSE_SINK": self.sink_name,
             "PULSE_SOURCE": f"{self.sink_name}.monitor",
@@ -260,8 +260,7 @@ class MeetBot:
         ]
         if getattr(self.settings, "chrome_headless", False):
             chrome_args.append("--headless=new")
-        if self._uses_pulseaudio():
-            chrome_args.append("--alsa-output-device=pulse")
+        chrome_args.append("--alsa-output-device=pulse")
         for arg in chrome_args:
             options.add_argument(arg)
         options.add_experimental_option(
