@@ -173,19 +173,18 @@ class MeetBot:
                 getattr(meeting, "start_time", None),
                 getattr(meeting, "end_time", None),
             )
-            if self._uses_pulseaudio():
-                self.pulse_sink = PulseAudioSink(sink_name)
-                try:
-                    self.pulse_sink.setup()
-                    logger.info("PulseAudio configured for meeting audio:\n%s", self.pulse_sink.diagnostics())
-                except FileNotFoundError:
-                    audio_enabled = False
-                    audio.record_error("pactl not found; PulseAudio recording disabled")
-                    logger.warning("pactl was not found; PulseAudio recording is disabled.")
-                except Exception as exc:
-                    audio_enabled = False
-                    audio.record_error(f"PulseAudio setup failed: {exc}")
-                    logger.exception("PulseAudio setup failed; continuing without audio recording")
+            self.pulse_sink = PulseAudioSink(sink_name)
+            try:
+                self.pulse_sink.setup()
+                logger.info("PulseAudio configured for meeting audio:\n%s", self.pulse_sink.diagnostics())
+            except FileNotFoundError:
+                audio_enabled = False
+                audio.record_error("pactl not found; PulseAudio recording disabled")
+                logger.warning("pactl was not found; PulseAudio recording is disabled.")
+            except Exception as exc:
+                audio_enabled = False
+                audio.record_error(f"PulseAudio setup failed: {exc}")
+                logger.exception("PulseAudio setup failed; continuing without audio recording")
             self._start_display()
             self.driver = self._launch_browser()
             self._sign_in(logger, meeting_dir)
