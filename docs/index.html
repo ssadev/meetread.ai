@@ -616,7 +616,7 @@
       <div class="feat-card">
         <div class="feat-icon">🎙️</div>
         <div class="feat-title">System audio recording</div>
-        <div class="feat-desc">PulseAudio null-sink on Linux/Docker, BlackHole on macOS. WAV chunks concatenated to final WAV + MP3 via ffmpeg.</div>
+        <div class="feat-desc">PulseAudio null-sink per meeting on Linux/Docker. WAV chunks concatenated to final WAV + MP3 via ffmpeg.</div>
       </div>
       <div class="feat-card">
         <div class="feat-icon">📝</div>
@@ -792,15 +792,6 @@
           cp .env.docker.example .env.docker<br/>
           # fill BOT_GOOGLE_ACCOUNT_EMAIL<br/>
           docker compose up --build
-        </div>
-      </div>
-      <div class="deploy-card">
-        <h3>🍎 macOS</h3>
-        <p>BlackHole loopback + persistent Chrome profile. No PulseAudio needed.</p>
-        <div class="deploy-code">
-          brew install blackhole-2ch ffmpeg<br/>
-          cp .env.example .env<br/>
-          python main.py
         </div>
       </div>
       <div class="deploy-card">

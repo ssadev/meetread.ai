@@ -98,7 +98,7 @@ class PulseAudioSink:
 
     def _set_audio_env(self) -> None:
         # ALSA's pulse plugin and Chrome both honor these variables. Setting them here keeps
-        # browser playback and the sounddevice capture stream on the same per-meeting sink.
+        # browser playback and the sounddevice capture stream share the same per-meeting PulseAudio sink.
         updates = {
             "PULSE_SINK": self.sink_name,
             "PULSE_SOURCE": f"{self.sink_name}.monitor",
@@ -167,29 +167,24 @@ class MeetBot:
 
         try:
             logger.info(
-                "Meeting bot run started: title=%s url=%s start_time=%s end_time=%s audio_backend=%s",
+                "Meeting bot run started: title=%s url=%s start_time=%s end_time=%s",
                 getattr(meeting, "meeting_title", getattr(meeting, "title", "")),
                 getattr(meeting, "meet_url", ""),
                 getattr(meeting, "start_time", None),
                 getattr(meeting, "end_time", None),
-                self.settings.audio_backend,
             )
-            if self._uses_pulseaudio():
-                self.pulse_sink = PulseAudioSink(sink_name)
-                try:
-                    self.pulse_sink.setup()
-                    logger.info("PulseAudio configured for meeting audio:\n%s", self.pulse_sink.diagnostics())
-                except FileNotFoundError:
-                    audio_enabled = False
-                    audio.record_error("pactl not found; PulseAudio recording disabled")
-                    logger.warning(
-                        "pactl was not found, so PulseAudio recording is disabled. "
-                        "Set AUDIO_BACKEND=sounddevice on macOS and configure AUDIO_INPUT_DEVICE."
-                    )
-                except Exception as exc:
-                    audio_enabled = False
-                    audio.record_error(f"PulseAudio setup failed: {exc}")
-                    logger.exception("PulseAudio setup failed; continuing without audio recording")
+            self.pulse_sink = PulseAudioSink(sink_name)
+            try:
+                self.pulse_sink.setup()
+                logger.info("PulseAudio configured for meeting audio:\n%s", self.pulse_sink.diagnostics())
+            except FileNotFoundError:
+                audio_enabled = False
+                audio.record_error("pactl not found; PulseAudio recording disabled")
+                logger.warning("pactl was not found; PulseAudio recording is disabled.")
+            except Exception as exc:
+                audio_enabled = False
+                audio.record_error(f"PulseAudio setup failed: {exc}")
+                logger.exception("PulseAudio setup failed; continuing without audio recording")
             self._start_display()
             self.driver = self._launch_browser()
             self._sign_in(logger, meeting_dir)
@@ -260,13 +255,14 @@ class MeetBot:
             "--disable-blink-features=AutomationControlled",
             "--no-sandbox",
             "--disable-dev-shm-usage",
+            "--disable-gpu",
+            "--disable-software-rasterizer",
             "--autoplay-policy=no-user-gesture-required",
             "--window-size=1920,1080",
         ]
         if getattr(self.settings, "chrome_headless", False):
             chrome_args.append("--headless=new")
-        if self._uses_pulseaudio():
-            chrome_args.append("--alsa-output-device=pulse")
+        chrome_args.append("--alsa-output-device=pulse")
         for arg in chrome_args:
             options.add_argument(arg)
         options.add_experimental_option(
@@ -290,6 +286,16 @@ class MeetBot:
         if getattr(self.settings, "chrome_profile_directory", None):
             options.add_argument(f"--profile-directory={self.settings.chrome_profile_directory}")
         driver = uc.Chrome(**kwargs)
+        try:
+            driver.execute_cdp_cmd("Page.addScriptToEvaluateOnNewDocument", {
+                "source": (
+                    "Object.defineProperty(navigator,'webdriver',{get:()=>undefined,configurable:true});"
+                    "window.chrome=window.chrome||{};"
+                    "window.chrome.runtime=window.chrome.runtime||{};"
+                )
+            })
+        except Exception:
+            LOGGER.debug("Could not inject stealth script", exc_info=True)
         self._block_meet_media_permissions(driver)
         return driver
 
@@ -308,27 +314,9 @@ class MeetBot:
                 LOGGER.debug("Could not block %s permission through Chrome DevTools", permission, exc_info=True)
 
     def _create_audio_recorder(self, sink_name: str) -> AudioRecorder:
-        if self._uses_pulseaudio():
-            return AudioRecorder(sink_name=sink_name, settings=self.settings, device="pulse")
-        return AudioRecorder(sink_name=sink_name, settings=self.settings, device=self.settings.audio_input_device)
+        return AudioRecorder(sink_name=sink_name, settings=self.settings, device="pulse")
 
-    def _uses_pulseaudio(self) -> bool:
-        if self.settings.audio_backend == "pulseaudio":
-            return True
-        if self.settings.audio_backend == "sounddevice":
-            return False
-        return platform.system() == "Linux"
-
-    def _audio_capture_available(self, audio: AudioRecorder, logger: logging.Logger) -> bool:
-        if self._uses_pulseaudio():
-            return True
-        if platform.system() == "Darwin" and not self.settings.audio_input_device:
-            audio.record_error("AUDIO_INPUT_DEVICE is not set; macOS loopback recording disabled")
-            logger.warning(
-                "macOS audio capture needs a loopback input. Install BlackHole and set "
-                "AUDIO_INPUT_DEVICE='BlackHole 2ch' in .env. Captions will still be captured."
-            )
-            return False
+    def _audio_capture_available(self, audio: AudioRecorder, logger: logging.Logger) -> bool:  # noqa: ARG002
         return True
 
     def _chrome_version_main(self) -> int | None:
@@ -344,16 +332,7 @@ class MeetBot:
         candidates = []
         if getattr(self.settings, "chrome_binary_path", None):
             candidates.append(self.settings.chrome_binary_path)
-        if platform.system() == "Darwin":
-            candidates.extend(
-                [
-                    "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
-                    str(Path.home() / "Applications/Google Chrome.app/Contents/MacOS/Google Chrome"),
-                    "/Applications/Chromium.app/Contents/MacOS/Chromium",
-                ]
-            )
-        else:
-            candidates.extend(["google-chrome", "google-chrome-stable", "chromium", "chromium-browser"])
+        candidates.extend(["google-chrome", "google-chrome-stable", "chromium", "chromium-browser"])
 
         for candidate in candidates:
             executable = candidate if Path(candidate).exists() else shutil.which(candidate)
@@ -458,8 +437,17 @@ class MeetBot:
             LOGGER.exception("Could not write debug screenshot")
 
     def _join_meeting(self, meet_url: str, logger: logging.Logger, meeting_dir: Path) -> str:
+        meet_code = meet_url.rstrip("/").split("/")[-1]
         self.driver.get(meet_url)
         self._sleep(5)
+        current_url = getattr(self.driver, "current_url", "")
+        if meet_code not in current_url:
+            logger.warning("Meet navigation redirected away from meeting; expected code=%s got url=%s — retrying", meet_code, current_url)
+            self._dump_debug_page(meeting_dir, "meet_nav_redirected")
+            self.driver.get(meet_url)
+            self._sleep(8)
+            current_url = getattr(self.driver, "current_url", "")
+            logger.info("After retry, current url=%s", current_url)
         self._prepare_prejoin_screen(logger)
         joined = self._click_first(
             [
@@ -536,10 +524,7 @@ class MeetBot:
                 ' or contains(translate(@placeholder, "ABCDEFGHIJKLMNOPQRSTUVWXYZ", "abcdefghijklmnopqrstuvwxyz"), "name")]'
             ),
         ]
-        element = self._find_first(selectors, timeout=timeout)
-        if element:
-            return element
-        return self._find_first(['//input[not(@type) or @type="text"]'], timeout=2)
+        return self._find_first(selectors, timeout=timeout)
 
     def _enable_captions(self, logger: logging.Logger, meeting_dir: Path | None = None) -> None:
         # Meet changes these controls often; keep every selector fallback active and logged.

@@ -31,7 +31,7 @@ class AudioRecorder:
     ):
         self.sink_name = sink_name
         self.settings = settings
-        self.device = device if device is not None else settings.audio_input_device or f"{sink_name}.monitor"
+        self.device = device if device is not None else f"{sink_name}.monitor"
         self.pulse_source = f"{sink_name}.monitor"
         self._status = {
             "bytes_recorded": 0,
@@ -54,8 +54,7 @@ class AudioRecorder:
         self._status["started_at"] = datetime.now().isoformat()
         started = time.monotonic()
         LOGGER.info(
-            "Audio recorder starting: backend=%s device=%s pulse_source=%s samplerate=%s channels=%s chunk_seconds=%s",
-            self.settings.audio_backend,
+            "Audio recorder starting: device=%s pulse_source=%s samplerate=%s channels=%s chunk_seconds=%s",
             self.device,
             self.pulse_source,
             self.settings.audio_samplerate,

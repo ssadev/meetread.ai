@@ -13,27 +13,6 @@ from storage import MeetingStorage
 
 
 class MeetBotPlatformTests(unittest.TestCase):
-    def test_auto_audio_backend_uses_sounddevice_on_macos(self):
-        bot = MeetBot.__new__(MeetBot)
-        bot.settings = SimpleNamespace(audio_backend="auto")
-
-        with patch("meet_bot.platform.system", lambda: "Darwin"):
-            self.assertFalse(bot._uses_pulseaudio())
-
-    def test_macos_requires_explicit_audio_input_device(self):
-        settings = SimpleNamespace(audio_backend="sounddevice", audio_input_device=None)
-        bot = MeetBot.__new__(MeetBot)
-        bot.settings = settings
-        audio = AudioRecorder(settings=settings, device=None)
-        logger = logging.getLogger("test")
-        logger.disabled = True
-
-        with patch("meet_bot.platform.system", lambda: "Darwin"):
-            enabled = bot._audio_capture_available(audio, logger)
-
-        self.assertFalse(enabled)
-        self.assertIn("AUDIO_INPUT_DEVICE is not set", audio.get_status()["errors"][0])
-
     def test_chrome_major_version_is_parsed_from_browser_output(self):
         bot = MeetBot.__new__(MeetBot)
         bot.settings = SimpleNamespace(chrome_version_main=None, chrome_binary_path=None)
@@ -106,7 +85,7 @@ class MeetBotPlatformTests(unittest.TestCase):
 
     def test_pulseaudio_recorder_uses_portaudio_pulse_device(self):
         bot = MeetBot.__new__(MeetBot)
-        bot.settings = SimpleNamespace(audio_backend="pulseaudio", audio_input_device=None)
+        bot.settings = SimpleNamespace()
 
         audio = bot._create_audio_recorder("MeetBot_test")
 
