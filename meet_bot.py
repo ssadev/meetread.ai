@@ -255,6 +255,8 @@ class MeetBot:
             "--disable-blink-features=AutomationControlled",
             "--no-sandbox",
             "--disable-dev-shm-usage",
+            "--disable-gpu",
+            "--disable-software-rasterizer",
             "--autoplay-policy=no-user-gesture-required",
             "--window-size=1920,1080",
         ]
@@ -284,6 +286,16 @@ class MeetBot:
         if getattr(self.settings, "chrome_profile_directory", None):
             options.add_argument(f"--profile-directory={self.settings.chrome_profile_directory}")
         driver = uc.Chrome(**kwargs)
+        try:
+            driver.execute_cdp_cmd("Page.addScriptToEvaluateOnNewDocument", {
+                "source": (
+                    "Object.defineProperty(navigator,'webdriver',{get:()=>undefined,configurable:true});"
+                    "window.chrome=window.chrome||{};"
+                    "window.chrome.runtime=window.chrome.runtime||{};"
+                )
+            })
+        except Exception:
+            LOGGER.debug("Could not inject stealth script", exc_info=True)
         self._block_meet_media_permissions(driver)
         return driver
 
@@ -425,8 +437,17 @@ class MeetBot:
             LOGGER.exception("Could not write debug screenshot")
 
     def _join_meeting(self, meet_url: str, logger: logging.Logger, meeting_dir: Path) -> str:
+        meet_code = meet_url.rstrip("/").split("/")[-1]
         self.driver.get(meet_url)
         self._sleep(5)
+        current_url = getattr(self.driver, "current_url", "")
+        if meet_code not in current_url:
+            logger.warning("Meet navigation redirected away from meeting; expected code=%s got url=%s — retrying", meet_code, current_url)
+            self._dump_debug_page(meeting_dir, "meet_nav_redirected")
+            self.driver.get(meet_url)
+            self._sleep(8)
+            current_url = getattr(self.driver, "current_url", "")
+            logger.info("After retry, current url=%s", current_url)
         self._prepare_prejoin_screen(logger)
         joined = self._click_first(
             [
@@ -503,10 +524,7 @@ class MeetBot:
                 ' or contains(translate(@placeholder, "ABCDEFGHIJKLMNOPQRSTUVWXYZ", "abcdefghijklmnopqrstuvwxyz"), "name")]'
             ),
         ]
-        element = self._find_first(selectors, timeout=timeout)
-        if element:
-            return element
-        return self._find_first(['//input[not(@type) or @type="text"]'], timeout=2)
+        return self._find_first(selectors, timeout=timeout)
 
     def _enable_captions(self, logger: logging.Logger, meeting_dir: Path | None = None) -> None:
         # Meet changes these controls often; keep every selector fallback active and logged.
