@@ -4,9 +4,11 @@ import logging
 import queue
 import shutil
 import subprocess
+import sys
 import threading
 import time
 import wave
+from array import array
 from datetime import datetime
 from pathlib import Path
 from typing import Any
@@ -16,6 +18,8 @@ from storage import MeetingStorage
 
 
 LOGGER = logging.getLogger(__name__)
+# Treat samples below roughly -54 dBFS in 16-bit PCM as silence/noise floor.
+MIN_AUDIO_PEAK = 64
 
 
 class AudioRecorder:
@@ -27,12 +31,13 @@ class AudioRecorder:
     ):
         self.sink_name = sink_name
         self.settings = settings
-        self.device = device if device is not None else settings.audio_input_device or f"{sink_name}.monitor"
+        self.device = device if device is not None else f"{sink_name}.monitor"
         self.pulse_source = f"{sink_name}.monitor"
         self._status = {
             "bytes_recorded": 0,
             "chunk_count": 0,
             "errors": [],
+            "silent_chunks": 0,
             "started_at": None,
             "finished_at": None,
             "audio_file": None,
@@ -49,8 +54,7 @@ class AudioRecorder:
         self._status["started_at"] = datetime.now().isoformat()
         started = time.monotonic()
         LOGGER.info(
-            "Audio recorder starting: backend=%s device=%s pulse_source=%s samplerate=%s channels=%s chunk_seconds=%s",
-            self.settings.audio_backend,
+            "Audio recorder starting: device=%s pulse_source=%s samplerate=%s channels=%s chunk_seconds=%s",
             self.device,
             self.pulse_source,
             self.settings.audio_samplerate,
@@ -125,6 +129,8 @@ class AudioRecorder:
                     )
                     chunk_index += 1
                 else:
+                    self._status["silent_chunks"] += 1
+                    LOGGER.warning("Discarding silent audio chunk: chunk=%s", chunk_path.name)
                     chunk_path.unlink(missing_ok=True)
 
     def _write_chunk(self, chunk_path: Path, audio_queue: queue.Queue[bytes], stop_event: threading.Event) -> None:
@@ -146,7 +152,10 @@ class AudioRecorder:
             return False
         try:
             with wave.open(str(chunk_path), "rb") as wav:
-                return wav.getnframes() > 0
+                frames = wav.readframes(wav.getnframes())
+                if not frames:
+                    return False
+                return _max_sample_peak(frames, wav.getsampwidth()) >= MIN_AUDIO_PEAK
         except wave.Error:
             return False
 
@@ -187,3 +196,24 @@ class AudioRecorder:
 
     def get_status(self) -> dict[str, Any]:
         return dict(self._status)
+
+
+def _max_sample_peak(frames: bytes, sample_width: int) -> int:
+    if sample_width == 1:
+        return max((abs(sample - 128) << 8 for sample in frames), default=0)
+    if sample_width not in {2, 3, 4} or len(frames) < sample_width:
+        return 0
+    samples = array("h")
+    if sample_width == 2:
+        samples.frombytes(frames[: len(frames) - (len(frames) % sample_width)])
+        if sys.byteorder != "little":
+            samples.byteswap()
+        return max((abs(sample) for sample in samples), default=0)
+    peak = 0
+    shift = 8 if sample_width == 3 else 16
+    frame_count = len(frames) // sample_width
+    for index in range(frame_count):
+        start = index * sample_width
+        sample = int.from_bytes(frames[start : start + sample_width], "little", signed=True)
+        peak = max(peak, abs(sample) >> shift)
+    return peak

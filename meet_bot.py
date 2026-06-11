@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import logging
 import os
 import pickle
@@ -17,11 +18,56 @@ from uuid import uuid4
 from audio_recorder import AudioRecorder
 from caption_scraper import CaptionScraper
 from config import SETTINGS, Settings
+from email_delivery import send_summary_email_for_meeting
+from meeting_intelligence import complete_llm_json, create_meeting_intelligence_provider, render_intelligence_markdown
 from storage import MeetingStorage
 
 
 LOGGER = logging.getLogger(__name__)
 MEET_URL_RE = re.compile(r"https://meet\.google\.com/[a-z]{3}-[a-z]{4}-[a-z]{3}")
+JOIN_DIALOG_LLM_SCHEMA: dict[str, Any] = {
+    "type": "object",
+    "additionalProperties": False,
+    "properties": {
+        "decision": {"type": "string", "enum": ["allow", "deny", "unknown"]},
+        "button_label": {"type": ["string", "null"]},
+        "confidence": {"type": "number"},
+        "reason": {"type": "string"},
+    },
+    "required": ["decision", "button_label", "confidence", "reason"],
+}
+JOIN_DIALOG_LLM_SYSTEM_PROMPT = """You classify visible Google Meet modal dialogs for an unattended meeting capture bot.
+Return JSON only. Decide "allow" only when the dialog is a benign consent/continue prompt needed to enter or continue a meeting, especially prompts about sharing call audio/video with a meeting assistant or plugin.
+Return "deny" for destructive, security, sign-in, payment, permission escalation, leave, cancel, or stop-recording prompts.
+Return "unknown" whenever unsure. The button_label must exactly match one visible button label or be null."""
+KNOWN_SAFE_DIALOG_PATTERNS = [
+    re.compile(r"\b(?:your\s+)?call audio (?:and|&)\s+video will be shared with\b", re.I),
+    re.compile(r"\baudio (?:and|&)\s+video will be shared with\b", re.I),
+]
+AFFIRMATIVE_DIALOG_LABELS = {
+    "accept",
+    "agree",
+    "allow",
+    "continue",
+    "got it",
+    "i agree",
+    "join now",
+    "ok",
+    "okay",
+    "yes",
+}
+NEGATIVE_DIALOG_LABELS = {
+    "cancel",
+    "close",
+    "deny",
+    "dismiss",
+    "leave",
+    "no",
+    "not now",
+    "stop",
+}
+MIN_DIALOG_LLM_CONFIDENCE = 0.80
+MAX_DIALOG_TEXT_CHARS = 1200
 
 
 class PulseAudioSink:
@@ -52,7 +98,7 @@ class PulseAudioSink:
 
     def _set_audio_env(self) -> None:
         # ALSA's pulse plugin and Chrome both honor these variables. Setting them here keeps
-        # browser playback and the sounddevice capture stream on the same per-meeting sink.
+        # browser playback and the sounddevice capture stream share the same per-meeting PulseAudio sink.
         updates = {
             "PULSE_SINK": self.sink_name,
             "PULSE_SOURCE": f"{self.sink_name}.monitor",
@@ -100,6 +146,7 @@ class MeetBot:
         self.driver = None
         self.display = None
         self.pulse_sink: PulseAudioSink | None = None
+        self._join_blocker: dict[str, Any] | None = None
 
     def run(self, meeting: Any) -> dict[str, Any]:
         meeting_id = str(uuid4())
@@ -116,32 +163,28 @@ class MeetBot:
         audio_enabled = self._audio_capture_available(audio, logger)
         joined_at: datetime | None = None
         status = "failed"
+        self._join_blocker = None
 
         try:
             logger.info(
-                "Meeting bot run started: title=%s url=%s start_time=%s end_time=%s audio_backend=%s",
+                "Meeting bot run started: title=%s url=%s start_time=%s end_time=%s",
                 getattr(meeting, "meeting_title", getattr(meeting, "title", "")),
                 getattr(meeting, "meet_url", ""),
                 getattr(meeting, "start_time", None),
                 getattr(meeting, "end_time", None),
-                self.settings.audio_backend,
             )
-            if self._uses_pulseaudio():
-                self.pulse_sink = PulseAudioSink(sink_name)
-                try:
-                    self.pulse_sink.setup()
-                    logger.info("PulseAudio configured for meeting audio:\n%s", self.pulse_sink.diagnostics())
-                except FileNotFoundError:
-                    audio_enabled = False
-                    audio.record_error("pactl not found; PulseAudio recording disabled")
-                    logger.warning(
-                        "pactl was not found, so PulseAudio recording is disabled. "
-                        "Set AUDIO_BACKEND=sounddevice on macOS and configure AUDIO_INPUT_DEVICE."
-                    )
-                except Exception as exc:
-                    audio_enabled = False
-                    audio.record_error(f"PulseAudio setup failed: {exc}")
-                    logger.exception("PulseAudio setup failed; continuing without audio recording")
+            self.pulse_sink = PulseAudioSink(sink_name)
+            try:
+                self.pulse_sink.setup()
+                logger.info("PulseAudio configured for meeting audio:\n%s", self.pulse_sink.diagnostics())
+            except FileNotFoundError:
+                audio_enabled = False
+                audio.record_error("pactl not found; PulseAudio recording disabled")
+                logger.warning("pactl was not found; PulseAudio recording is disabled.")
+            except Exception as exc:
+                audio_enabled = False
+                audio.record_error(f"PulseAudio setup failed: {exc}")
+                logger.exception("PulseAudio setup failed; continuing without audio recording")
             self._start_display()
             self.driver = self._launch_browser()
             self._sign_in(logger, meeting_dir)
@@ -212,13 +255,14 @@ class MeetBot:
             "--disable-blink-features=AutomationControlled",
             "--no-sandbox",
             "--disable-dev-shm-usage",
+            "--disable-gpu",
+            "--disable-software-rasterizer",
             "--autoplay-policy=no-user-gesture-required",
             "--window-size=1920,1080",
         ]
         if getattr(self.settings, "chrome_headless", False):
             chrome_args.append("--headless=new")
-        if self._uses_pulseaudio():
-            chrome_args.append("--alsa-output-device=pulse")
+        chrome_args.append("--alsa-output-device=pulse")
         for arg in chrome_args:
             options.add_argument(arg)
         options.add_experimental_option(
@@ -242,6 +286,16 @@ class MeetBot:
         if getattr(self.settings, "chrome_profile_directory", None):
             options.add_argument(f"--profile-directory={self.settings.chrome_profile_directory}")
         driver = uc.Chrome(**kwargs)
+        try:
+            driver.execute_cdp_cmd("Page.addScriptToEvaluateOnNewDocument", {
+                "source": (
+                    "Object.defineProperty(navigator,'webdriver',{get:()=>undefined,configurable:true});"
+                    "window.chrome=window.chrome||{};"
+                    "window.chrome.runtime=window.chrome.runtime||{};"
+                )
+            })
+        except Exception:
+            LOGGER.debug("Could not inject stealth script", exc_info=True)
         self._block_meet_media_permissions(driver)
         return driver
 
@@ -260,27 +314,9 @@ class MeetBot:
                 LOGGER.debug("Could not block %s permission through Chrome DevTools", permission, exc_info=True)
 
     def _create_audio_recorder(self, sink_name: str) -> AudioRecorder:
-        if self._uses_pulseaudio():
-            return AudioRecorder(sink_name=sink_name, settings=self.settings, device="pulse")
-        return AudioRecorder(sink_name=sink_name, settings=self.settings, device=self.settings.audio_input_device)
+        return AudioRecorder(sink_name=sink_name, settings=self.settings, device="pulse")
 
-    def _uses_pulseaudio(self) -> bool:
-        if self.settings.audio_backend == "pulseaudio":
-            return True
-        if self.settings.audio_backend == "sounddevice":
-            return False
-        return platform.system() == "Linux"
-
-    def _audio_capture_available(self, audio: AudioRecorder, logger: logging.Logger) -> bool:
-        if self._uses_pulseaudio():
-            return True
-        if platform.system() == "Darwin" and not self.settings.audio_input_device:
-            audio.record_error("AUDIO_INPUT_DEVICE is not set; macOS loopback recording disabled")
-            logger.warning(
-                "macOS audio capture needs a loopback input. Install BlackHole and set "
-                "AUDIO_INPUT_DEVICE='BlackHole 2ch' in .env. Captions will still be captured."
-            )
-            return False
+    def _audio_capture_available(self, audio: AudioRecorder, logger: logging.Logger) -> bool:  # noqa: ARG002
         return True
 
     def _chrome_version_main(self) -> int | None:
@@ -296,16 +332,7 @@ class MeetBot:
         candidates = []
         if getattr(self.settings, "chrome_binary_path", None):
             candidates.append(self.settings.chrome_binary_path)
-        if platform.system() == "Darwin":
-            candidates.extend(
-                [
-                    "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
-                    str(Path.home() / "Applications/Google Chrome.app/Contents/MacOS/Google Chrome"),
-                    "/Applications/Chromium.app/Contents/MacOS/Chromium",
-                ]
-            )
-        else:
-            candidates.extend(["google-chrome", "google-chrome-stable", "chromium", "chromium-browser"])
+        candidates.extend(["google-chrome", "google-chrome-stable", "chromium", "chromium-browser"])
 
         for candidate in candidates:
             executable = candidate if Path(candidate).exists() else shutil.which(candidate)
@@ -410,8 +437,17 @@ class MeetBot:
             LOGGER.exception("Could not write debug screenshot")
 
     def _join_meeting(self, meet_url: str, logger: logging.Logger, meeting_dir: Path) -> str:
+        meet_code = meet_url.rstrip("/").split("/")[-1]
         self.driver.get(meet_url)
         self._sleep(5)
+        current_url = getattr(self.driver, "current_url", "")
+        if meet_code not in current_url:
+            logger.warning("Meet navigation redirected away from meeting; expected code=%s got url=%s — retrying", meet_code, current_url)
+            self._dump_debug_page(meeting_dir, "meet_nav_redirected")
+            self.driver.get(meet_url)
+            self._sleep(8)
+            current_url = getattr(self.driver, "current_url", "")
+            logger.info("After retry, current url=%s", current_url)
         self._prepare_prejoin_screen(logger)
         joined = self._click_first(
             [
@@ -438,10 +474,18 @@ class MeetBot:
                 logger.warning("Meet join request was denied")
                 self._dump_debug_page(meeting_dir, "meet_join_denied")
                 return "denied"
+            blocker_status = self._resolve_post_join_blocking_dialog(logger)
+            if blocker_status == "resolved":
+                self._sleep(3)
+                continue
+            if blocker_status == "unresolved":
+                logger.warning("Meet join blocked by unresolved dialog")
+                self._dump_debug_page(meeting_dir, "meet_blocking_dialog_unresolved")
+                return "blocked_by_dialog"
             if self._inside_meeting():
                 logger.info("Admitted to Google Meet")
                 return "joined"
-            if self._page_contains("Someone will let you in") or self._page_contains("Ask to join"):
+            if self._waiting_for_host_detected():
                 self._sleep(30)
                 continue
             self._sleep(5)
@@ -480,10 +524,7 @@ class MeetBot:
                 ' or contains(translate(@placeholder, "ABCDEFGHIJKLMNOPQRSTUVWXYZ", "abcdefghijklmnopqrstuvwxyz"), "name")]'
             ),
         ]
-        element = self._find_first(selectors, timeout=timeout)
-        if element:
-            return element
-        return self._find_first(['//input[not(@type) or @type="text"]'], timeout=2)
+        return self._find_first(selectors, timeout=timeout)
 
     def _enable_captions(self, logger: logging.Logger, meeting_dir: Path | None = None) -> None:
         # Meet changes these controls often; keep every selector fallback active and logged.
@@ -573,6 +614,228 @@ class MeetBot:
         ]
         return any(marker in page for marker in denied_markers)
 
+    def _waiting_for_host_detected(self) -> bool:
+        page = self._page_text().lower()
+        waiting_markers = [
+            "please wait until a meeting host brings you into the call",
+            "meeting host brings you into the call",
+            "someone will let you in",
+            "waiting to be let in",
+            "waiting for the host",
+            "you'll join the call when someone lets you in",
+            "you’ll join the call when someone lets you in",
+            "ask to join",
+            "asking to join",
+        ]
+        return any(marker in page for marker in waiting_markers)
+
+    def _blocking_join_dialog_detected(self) -> bool:
+        return bool(self._visible_blocking_dialogs())
+
+    def _resolve_post_join_blocking_dialog(self, logger: logging.Logger) -> str:
+        dialogs = self._visible_blocking_dialogs()
+        if not dialogs:
+            return "none"
+        dialog = dialogs[-1]
+        pattern_label = self._known_safe_dialog_button_label(dialog)
+        if pattern_label and self._click_dialog_button(dialog, pattern_label):
+            self._record_join_blocker("resolved", "pattern", "known_safe_dialog", dialog)
+            logger.info("Accepted known-safe post-join Meet dialog: button=%s", pattern_label)
+            return "resolved"
+        llm_decision = self._classify_join_dialog_with_llm(dialog, logger)
+        if self._llm_decision_allows(dialog, llm_decision) and self._click_dialog_button(dialog, llm_decision["button_label"]):
+            self._record_join_blocker("resolved", "llm", llm_decision.get("reason") or "llm_allow", dialog)
+            logger.info(
+                "Accepted LLM-classified post-join Meet dialog: button=%s confidence=%.2f",
+                llm_decision["button_label"],
+                llm_decision.get("confidence", 0.0),
+            )
+            return "resolved"
+        reason = (llm_decision or {}).get("reason") or "unrecognized_dialog"
+        classifier = "llm" if llm_decision else "none"
+        self._record_join_blocker("unresolved", classifier, reason, dialog)
+        return "unresolved"
+
+    def _visible_blocking_dialogs(self) -> list[dict[str, Any]]:
+        dialogs: list[dict[str, Any]] = []
+        seen: set[str] = set()
+        try:
+            elements = self.driver.find_elements("xpath", '//*[@aria-modal="true" or @role="dialog"]')
+        except Exception:
+            return dialogs
+        for element in elements:
+            if not self._element_visible(element):
+                continue
+            text = self._element_text(element)
+            buttons = self._dialog_buttons(element)
+            if not text or not buttons:
+                continue
+            aria_modal = (self._element_attribute(element, "aria-modal") or "").lower() == "true"
+            if not aria_modal and not self._dialog_has_actionable_button(buttons):
+                continue
+            key = f"{text}|{','.join(button['label'] for button in buttons)}"
+            if key in seen:
+                continue
+            seen.add(key)
+            dialogs.append({"text": text, "buttons": buttons, "aria_modal": aria_modal})
+        return dialogs
+
+    def _dialog_buttons(self, dialog: Any) -> list[dict[str, Any]]:
+        buttons: list[dict[str, Any]] = []
+        try:
+            elements = dialog.find_elements("xpath", './/button|.//*[@role="button"]')
+        except Exception:
+            return buttons
+        seen: set[str] = set()
+        for element in elements:
+            if not self._element_visible(element) or not self._element_enabled(element):
+                continue
+            label = self._button_label(element)
+            if not label:
+                continue
+            key = label.lower()
+            if key in seen:
+                continue
+            seen.add(key)
+            buttons.append({"label": label, "element": element})
+        return buttons
+
+    def _dialog_has_actionable_button(self, buttons: list[dict[str, Any]]) -> bool:
+        for button in buttons:
+            normalized = self._normalize_button_label(button["label"])
+            if normalized and normalized not in {"close", "dismiss"}:
+                return True
+        return False
+
+    def _known_safe_dialog_button_label(self, dialog: dict[str, Any]) -> str | None:
+        text = dialog["text"]
+        if not any(pattern.search(text) for pattern in KNOWN_SAFE_DIALOG_PATTERNS):
+            return None
+        return self._first_affirmative_button_label(dialog)
+
+    def _first_affirmative_button_label(self, dialog: dict[str, Any]) -> str | None:
+        for button in dialog["buttons"]:
+            normalized = self._normalize_button_label(button["label"])
+            if normalized in AFFIRMATIVE_DIALOG_LABELS:
+                return button["label"]
+        return None
+
+    def _classify_join_dialog_with_llm(self, dialog: dict[str, Any], logger: logging.Logger) -> dict[str, Any] | None:
+        if not self._dialog_llm_enabled():
+            return None
+        payload = {
+            "dialog_text": self._clip_dialog_text(dialog["text"]),
+            "button_labels": [button["label"] for button in dialog["buttons"]],
+        }
+        try:
+            result = complete_llm_json(
+                [
+                    {"role": "system", "content": JOIN_DIALOG_LLM_SYSTEM_PROMPT},
+                    {
+                        "role": "user",
+                        "content": "Classify this Google Meet blocker dialog:\n" + json.dumps(payload, ensure_ascii=False),
+                    },
+                ],
+                self.settings,
+                schema_name="meet_dialog_blocker",
+                schema=JOIN_DIALOG_LLM_SCHEMA,
+            )
+        except Exception as exc:
+            logger.warning("LLM join dialog classification failed; using safe fallback: %s", exc)
+            return None
+        return {
+            "decision": str(result.get("decision") or "unknown").strip().lower(),
+            "button_label": _clean_dialog_value(result.get("button_label")),
+            "confidence": _safe_float(result.get("confidence")),
+            "reason": _clean_dialog_value(result.get("reason")) or "llm_classification",
+        }
+
+    def _dialog_llm_enabled(self) -> bool:
+        if not getattr(self.settings, "meet_dialog_llm_enabled", True):
+            return False
+        provider = str(getattr(self.settings, "meeting_intelligence_provider", "") or "").strip().lower().replace("-", "_")
+        return provider == "llm"
+
+    def _llm_decision_allows(self, dialog: dict[str, Any], decision: dict[str, Any] | None) -> bool:
+        if not decision:
+            return False
+        label = decision.get("button_label") or ""
+        normalized = self._normalize_button_label(label)
+        if decision.get("decision") != "allow":
+            return False
+        if decision.get("confidence", 0.0) < MIN_DIALOG_LLM_CONFIDENCE:
+            return False
+        if normalized in NEGATIVE_DIALOG_LABELS:
+            return False
+        visible_labels = {self._normalize_button_label(button["label"]) for button in dialog["buttons"]}
+        return normalized in visible_labels and bool(normalized)
+
+    def _click_dialog_button(self, dialog: dict[str, Any], label: str) -> bool:
+        normalized = self._normalize_button_label(label)
+        if normalized in NEGATIVE_DIALOG_LABELS:
+            return False
+        for button in dialog["buttons"]:
+            if self._normalize_button_label(button["label"]) == normalized:
+                button["element"].click()
+                return True
+        return False
+
+    def _record_join_blocker(
+        self,
+        status: str,
+        classifier: str,
+        reason: str,
+        dialog: dict[str, Any],
+    ) -> None:
+        self._join_blocker = {
+            "join_blocker_status": status,
+            "join_blocker_classifier": classifier,
+            "join_blocker_reason": _clean_dialog_value(reason) or "unknown",
+            "join_blocker_text_excerpt": self._clip_dialog_text(dialog.get("text", "")),
+        }
+
+    def _join_blocker_metadata(self) -> dict[str, Any]:
+        return dict(getattr(self, "_join_blocker", None) or {})
+
+    def _button_label(self, element: Any) -> str:
+        for attribute in ("aria-label", "data-tooltip", "title"):
+            value = self._element_attribute(element, attribute)
+            if value:
+                return _clean_dialog_value(value)
+        return _clean_dialog_value(self._element_text(element))
+
+    def _element_text(self, element: Any) -> str:
+        try:
+            return _clean_dialog_value(element.text)
+        except Exception:
+            text = self._element_attribute(element, "textContent")
+            return _clean_dialog_value(text)
+
+    def _element_attribute(self, element: Any, name: str) -> str:
+        try:
+            return str(element.get_attribute(name) or "")
+        except Exception:
+            return ""
+
+    def _element_visible(self, element: Any) -> bool:
+        try:
+            return bool(element.is_displayed())
+        except Exception:
+            return False
+
+    def _element_enabled(self, element: Any) -> bool:
+        try:
+            return bool(element.is_enabled())
+        except Exception:
+            return False
+
+    def _normalize_button_label(self, label: str) -> str:
+        return " ".join(str(label or "").strip().lower().split())
+
+    def _clip_dialog_text(self, text: str) -> str:
+        text = _clean_dialog_value(text)
+        return text[:MAX_DIALOG_TEXT_CHARS]
+
     def _finish(
         self,
         meeting_dir: Path,
@@ -585,22 +848,72 @@ class MeetBot:
         leave_time = datetime.now(timezone.utc)
         lines = captions.get_lines()
         transcript_updates = self.storage.finalize_transcripts(meeting_dir, lines)
+        metadata.update(transcript_updates)
+        intelligence_updates = self._generate_meeting_intelligence(meeting_dir, lines, metadata)
         audio_status = audio.get_status()
         final_status = status
         if status == "completed" and (audio_status.get("errors") or not audio_status.get("audio_file")):
             final_status = "partial"
         metadata.update(
-            transcript_updates,
+            intelligence_updates,
+            **self._join_blocker_metadata(),
             status=final_status,
             actual_leave_time=leave_time.isoformat(),
             duration_seconds=int((leave_time - joined_at).total_seconds()) if joined_at else 0,
             audio_file=audio_status.get("audio_file"),
             audio_duration_seconds=audio.get_duration_seconds(),
+            audio_silent_chunks=audio_status.get("silent_chunks", 0),
         )
+        if audio_status.get("errors"):
+            metadata["audio_errors"] = audio_status["errors"]
         if audio_status.get("mp3_file"):
             metadata["audio_mp3_file"] = audio_status["mp3_file"]
+        metadata.update(self._send_summary_email(meeting_dir, metadata))
         self.storage.write_metadata(meeting_dir, metadata)
         return metadata
+
+    def _send_summary_email(self, meeting_dir: Path, metadata: dict[str, Any]) -> dict[str, Any]:
+        return send_summary_email_for_meeting(meeting_dir, metadata, settings=self.settings)
+
+    def _generate_meeting_intelligence(
+        self,
+        meeting_dir: Path,
+        lines: list[dict[str, Any]],
+        metadata: dict[str, Any],
+    ) -> dict[str, Any]:
+        if not getattr(self.settings, "meeting_intelligence_enabled", True):
+            return {"meeting_intelligence_status": "disabled"}
+        provider_name = getattr(self.settings, "meeting_intelligence_provider", "rule_based")
+        try:
+            provider = create_meeting_intelligence_provider(provider_name, settings=self.settings)
+            result = provider.analyze(lines, metadata)
+            markdown = render_intelligence_markdown(result)
+            updates = self.storage.write_meeting_intelligence(meeting_dir, result, markdown)
+            updates["meeting_intelligence_status"] = "completed"
+            return updates
+        except Exception as exc:
+            LOGGER.exception("Meeting intelligence generation failed")
+            fallback_provider_name = getattr(self.settings, "meeting_llm_fallback_provider", "")
+            if provider_name == "llm" and fallback_provider_name and fallback_provider_name != "llm":
+                try:
+                    fallback = create_meeting_intelligence_provider(fallback_provider_name, settings=self.settings)
+                    result = fallback.analyze(lines, metadata)
+                    result["fallback_reason"] = str(exc)
+                    markdown = render_intelligence_markdown(result)
+                    updates = self.storage.write_meeting_intelligence(meeting_dir, result, markdown)
+                    updates["meeting_intelligence_status"] = "completed_with_fallback"
+                    updates["meeting_intelligence_error"] = str(exc)
+                    return updates
+                except Exception as fallback_exc:
+                    LOGGER.exception("Fallback meeting intelligence generation failed")
+                    return {
+                        "meeting_intelligence_status": "failed",
+                        "meeting_intelligence_error": f"{exc}; fallback failed: {fallback_exc}",
+                    }
+            return {
+                "meeting_intelligence_status": "failed",
+                "meeting_intelligence_error": str(exc),
+            }
 
     def _cleanup(self) -> None:
         if self.driver:
@@ -667,6 +980,8 @@ class MeetBot:
                 self._click_first([f'button[aria-label*="Turn on {label}" i]'], timeout=3)
 
     def _inside_meeting(self) -> bool:
+        if self._join_denied_detected() or self._waiting_for_host_detected() or self._blocking_join_dialog_detected():
+            return False
         in_call_controls = [
             'button[aria-label*="Leave call" i]',
             'button[data-tooltip*="Leave call" i]',
@@ -674,8 +989,6 @@ class MeetBot:
             'button[aria-label*="Turn off captions" i]',
         ]
         if self._find_first(in_call_controls, timeout=1):
-            return True
-        if self._page_contains("Leave call"):
             return True
         return False
 
@@ -744,3 +1057,15 @@ class MeetBot:
 
 class TwoFactorRequiredError(RuntimeError):
     pass
+
+
+def _clean_dialog_value(value: Any) -> str:
+    return " ".join(str(value or "").split())
+
+
+def _safe_float(value: Any, default: float = 0.0) -> float:
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        number = default
+    return max(0.0, min(1.0, number))

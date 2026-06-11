@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from types import SimpleNamespace
+import json
 import logging
 import tempfile
 import unittest
@@ -8,30 +9,10 @@ from unittest.mock import patch
 
 from audio_recorder import AudioRecorder
 from meet_bot import MeetBot
+from storage import MeetingStorage
 
 
 class MeetBotPlatformTests(unittest.TestCase):
-    def test_auto_audio_backend_uses_sounddevice_on_macos(self):
-        bot = MeetBot.__new__(MeetBot)
-        bot.settings = SimpleNamespace(audio_backend="auto")
-
-        with patch("meet_bot.platform.system", lambda: "Darwin"):
-            self.assertFalse(bot._uses_pulseaudio())
-
-    def test_macos_requires_explicit_audio_input_device(self):
-        settings = SimpleNamespace(audio_backend="sounddevice", audio_input_device=None)
-        bot = MeetBot.__new__(MeetBot)
-        bot.settings = settings
-        audio = AudioRecorder(settings=settings, device=None)
-        logger = logging.getLogger("test")
-        logger.disabled = True
-
-        with patch("meet_bot.platform.system", lambda: "Darwin"):
-            enabled = bot._audio_capture_available(audio, logger)
-
-        self.assertFalse(enabled)
-        self.assertIn("AUDIO_INPUT_DEVICE is not set", audio.get_status()["errors"][0])
-
     def test_chrome_major_version_is_parsed_from_browser_output(self):
         bot = MeetBot.__new__(MeetBot)
         bot.settings = SimpleNamespace(chrome_version_main=None, chrome_binary_path=None)
@@ -104,7 +85,7 @@ class MeetBotPlatformTests(unittest.TestCase):
 
     def test_pulseaudio_recorder_uses_portaudio_pulse_device(self):
         bot = MeetBot.__new__(MeetBot)
-        bot.settings = SimpleNamespace(audio_backend="pulseaudio", audio_input_device=None)
+        bot.settings = SimpleNamespace()
 
         audio = bot._create_audio_recorder("MeetBot_test")
 
@@ -158,10 +139,202 @@ class MeetBotPlatformTests(unittest.TestCase):
         self.assertTrue(bot._join_denied_detected())
 
     def test_inside_meeting_requires_visible_call_controls(self):
+        leave_button = FakeElement()
         bot = MeetBot.__new__(MeetBot)
-        bot.driver = FakeDriver({}, visible_text="People captions Leave call hidden in source")
+        bot.driver = FakeDriver({'button[aria-label*="Leave call" i]': [leave_button]}, visible_text="People captions")
 
         self.assertTrue(bot._inside_meeting())
+
+    def test_post_join_consent_dialog_is_not_inside_meeting(self):
+        leave_button = FakeElement()
+        join_button = FakeElement(text="Join now")
+        dialog = FakeElement(
+            text="Your call audio and video will be shared with Read AI",
+            attrs={"aria-modal": "true"},
+            children_by_selector={'.//button|.//*[@role="button"]': [join_button]},
+        )
+        bot = MeetBot.__new__(MeetBot)
+        bot.driver = FakeDriver(
+            {
+                'button[aria-label*="Leave call" i]': [leave_button],
+                '//*[@aria-modal="true" or @role="dialog"]': [dialog],
+            },
+            visible_text="People captions",
+        )
+
+        self.assertTrue(bot._blocking_join_dialog_detected())
+        self.assertFalse(bot._inside_meeting())
+
+    def test_known_safe_post_join_consent_dialog_can_be_accepted(self):
+        join_button = FakeElement(text="Join now")
+        dialog = FakeElement(
+            text="Your call audio and video will be shared with Read AI",
+            attrs={"aria-modal": "true"},
+            children_by_selector={'.//button|.//*[@role="button"]': [join_button]},
+        )
+        bot = MeetBot.__new__(MeetBot)
+        bot.settings = SimpleNamespace(meeting_intelligence_provider="rule_based", meet_dialog_llm_enabled=True)
+        bot.driver = FakeDriver(
+            {'//*[@aria-modal="true" or @role="dialog"]': [dialog]},
+            visible_text="People captions",
+        )
+        logger = logging.getLogger("test")
+        logger.disabled = True
+
+        self.assertEqual(bot._resolve_post_join_blocking_dialog(logger), "resolved")
+        self.assertTrue(join_button.clicked)
+        self.assertEqual(bot._join_blocker_metadata()["join_blocker_classifier"], "pattern")
+
+    def test_unknown_dialog_is_unresolved_when_llm_is_disabled(self):
+        continue_button = FakeElement(text="Continue")
+        dialog = FakeElement(
+            text="A third-party add-on needs a decision",
+            attrs={"aria-modal": "true"},
+            children_by_selector={'.//button|.//*[@role="button"]': [continue_button]},
+        )
+        bot = MeetBot.__new__(MeetBot)
+        bot.settings = SimpleNamespace(meeting_intelligence_provider="rule_based", meet_dialog_llm_enabled=True)
+        bot.driver = FakeDriver({'//*[@aria-modal="true" or @role="dialog"]': [dialog]})
+        logger = logging.getLogger("test")
+        logger.disabled = True
+
+        self.assertEqual(bot._resolve_post_join_blocking_dialog(logger), "unresolved")
+        self.assertFalse(continue_button.clicked)
+        self.assertEqual(bot._join_blocker_metadata()["join_blocker_status"], "unresolved")
+
+    def test_llm_can_accept_unknown_dialog_with_exact_visible_button(self):
+        continue_button = FakeElement(text="Continue")
+        dialog = FakeElement(
+            text="Assistant add-on needs permission to continue joining this call",
+            attrs={"aria-modal": "true"},
+            children_by_selector={'.//button|.//*[@role="button"]': [continue_button]},
+        )
+        bot = MeetBot.__new__(MeetBot)
+        bot.settings = SimpleNamespace(
+            meeting_intelligence_provider="llm",
+            meet_dialog_llm_enabled=True,
+            meeting_llm_provider="openai_compatible",
+        )
+        bot.driver = FakeDriver({'//*[@aria-modal="true" or @role="dialog"]': [dialog]})
+        logger = logging.getLogger("test")
+        logger.disabled = True
+
+        with patch(
+            "meet_bot.complete_llm_json",
+            return_value={
+                "decision": "allow",
+                "button_label": "Continue",
+                "confidence": 0.92,
+                "reason": "benign meeting assistant consent",
+            },
+        ):
+            self.assertEqual(bot._resolve_post_join_blocking_dialog(logger), "resolved")
+
+        self.assertTrue(continue_button.clicked)
+        self.assertEqual(bot._join_blocker_metadata()["join_blocker_classifier"], "llm")
+
+    def test_llm_low_confidence_does_not_click_unknown_dialog(self):
+        continue_button = FakeElement(text="Continue")
+        dialog = FakeElement(
+            text="Assistant add-on needs permission to continue joining this call",
+            attrs={"aria-modal": "true"},
+            children_by_selector={'.//button|.//*[@role="button"]': [continue_button]},
+        )
+        bot = MeetBot.__new__(MeetBot)
+        bot.settings = SimpleNamespace(meeting_intelligence_provider="llm", meet_dialog_llm_enabled=True)
+        bot.driver = FakeDriver({'//*[@aria-modal="true" or @role="dialog"]': [dialog]})
+        logger = logging.getLogger("test")
+        logger.disabled = True
+
+        with patch(
+            "meet_bot.complete_llm_json",
+            return_value={"decision": "allow", "button_label": "Continue", "confidence": 0.5, "reason": "unsure"},
+        ):
+            self.assertEqual(bot._resolve_post_join_blocking_dialog(logger), "unresolved")
+
+        self.assertFalse(continue_button.clicked)
+
+    def test_llm_never_clicks_destructive_dialog_button(self):
+        leave_button = FakeElement(text="Leave")
+        dialog = FakeElement(
+            text="Leave this call?",
+            attrs={"aria-modal": "true"},
+            children_by_selector={'.//button|.//*[@role="button"]': [leave_button]},
+        )
+        bot = MeetBot.__new__(MeetBot)
+        bot.settings = SimpleNamespace(meeting_intelligence_provider="llm", meet_dialog_llm_enabled=True)
+        bot.driver = FakeDriver({'//*[@aria-modal="true" or @role="dialog"]': [dialog]})
+        logger = logging.getLogger("test")
+        logger.disabled = True
+
+        with patch(
+            "meet_bot.complete_llm_json",
+            return_value={"decision": "allow", "button_label": "Leave", "confidence": 0.99, "reason": "bad advice"},
+        ):
+            self.assertEqual(bot._resolve_post_join_blocking_dialog(logger), "unresolved")
+
+        self.assertFalse(leave_button.clicked)
+
+    def test_stale_dialog_elements_are_not_treated_as_visible_or_enabled(self):
+        bot = MeetBot.__new__(MeetBot)
+        visible_error = FakeElement(display_error=True)
+        enabled_error = FakeElement(enabled_error=True)
+
+        self.assertFalse(bot._element_visible(visible_error))
+        self.assertFalse(bot._element_enabled(enabled_error))
+
+    def test_stale_dialog_is_ignored_by_blocker_detection(self):
+        dialog = FakeElement(
+            text="Your call audio and video will be shared with Read AI",
+            attrs={"aria-modal": "true"},
+            children_by_selector={'.//button|.//*[@role="button"]': [FakeElement(text="Join now")]},
+            display_error=True,
+        )
+        bot = MeetBot.__new__(MeetBot)
+        bot.driver = FakeDriver({'//*[@aria-modal="true" or @role="dialog"]': [dialog]})
+
+        self.assertFalse(bot._blocking_join_dialog_detected())
+
+    def test_join_meeting_returns_blocked_by_dialog_for_unresolved_blocker(self):
+        join_button = FakeElement(text="Join now")
+        continue_button = FakeElement(text="Continue")
+        dialog = FakeElement(
+            text="A third-party add-on needs a decision",
+            attrs={"aria-modal": "true"},
+            children_by_selector={'.//button|.//*[@role="button"]': [continue_button]},
+        )
+        bot = MeetBot.__new__(MeetBot)
+        bot.settings = SimpleNamespace(
+            lobby_wait_minutes=1,
+            meeting_intelligence_provider="rule_based",
+            meet_dialog_llm_enabled=True,
+        )
+        bot.driver = FakeDriver(
+            {
+                'button[aria-label*="Join now" i]': [join_button],
+                '//*[@aria-modal="true" or @role="dialog"]': [dialog],
+            }
+        )
+        bot._sleep = lambda seconds: None
+        bot._prepare_prejoin_screen = lambda logger: None
+        dumped = []
+        bot._dump_debug_page = lambda meeting_dir, name: dumped.append(name)
+        logger = logging.getLogger("test")
+        logger.disabled = True
+
+        self.assertEqual(bot._join_meeting("https://meet.google.com/abc-defg-hij", logger, "/tmp"), "blocked_by_dialog")
+        self.assertEqual(dumped, ["meet_blocking_dialog_unresolved"])
+
+    def test_waiting_for_host_page_is_not_inside_meeting(self):
+        leave_button = FakeElement()
+        bot = MeetBot.__new__(MeetBot)
+        bot.driver = FakeDriver(
+            {'button[aria-label*="Leave call" i]': [leave_button]},
+            visible_text="Please wait until a meeting host brings you into the call",
+        )
+
+        self.assertTrue(bot._waiting_for_host_detected())
+        self.assertFalse(bot._inside_meeting())
 
     def test_denied_page_is_not_inside_meeting(self):
         bot = MeetBot.__new__(MeetBot)
@@ -169,17 +342,123 @@ class MeetBotPlatformTests(unittest.TestCase):
 
         self.assertFalse(bot._inside_meeting())
 
+    def test_generate_meeting_intelligence_writes_artifacts(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            bot = MeetBot.__new__(MeetBot)
+            bot.settings = SimpleNamespace(meeting_intelligence_enabled=True, meeting_intelligence_provider="rule_based")
+            bot.storage = MeetingStorage(tmpdir)
+            meeting_dir = bot.storage.create_meeting_dir("Product Sync")
+            metadata = {"meeting_id": "m1", "title": "Product Sync", "transcript_file": "transcript_final.json"}
+
+            updates = bot._generate_meeting_intelligence(
+                meeting_dir,
+                [
+                    {
+                        "index": 1,
+                        "timestamp": "00:01:00",
+                        "speaker": "Alice",
+                        "text": "Alice will send the product launch notes tomorrow.",
+                    }
+                ],
+                metadata,
+            )
+
+            self.assertEqual(updates["meeting_intelligence_status"], "completed")
+            self.assertTrue((meeting_dir / "meeting_intelligence.md").exists())
+            result = json.loads((meeting_dir / "meeting_intelligence.json").read_text())
+            self.assertEqual(result["provider"], "rule_based")
+            self.assertEqual(result["action_items"][0]["owner"], "Alice")
+
+    def test_generate_meeting_intelligence_can_be_disabled(self):
+        bot = MeetBot.__new__(MeetBot)
+        bot.settings = SimpleNamespace(meeting_intelligence_enabled=False)
+
+        updates = bot._generate_meeting_intelligence("/tmp", [], {})
+
+        self.assertEqual(updates["meeting_intelligence_status"], "disabled")
+
+    def test_generate_meeting_intelligence_falls_back_when_llm_fails(self):
+        class FailingProvider:
+            def analyze(self, lines, metadata):
+                raise RuntimeError("llm unavailable")
+
+        class FallbackProvider:
+            def analyze(self, lines, metadata):
+                return {
+                    "provider": "rule_based",
+                    "title": "Fallback",
+                    "summary": "Fallback summary.",
+                    "key_points": [],
+                    "decisions": [],
+                    "risks": [],
+                    "action_items": [],
+                    "questions": [],
+                    "blockers": [],
+                    "topics": [],
+                }
+
+        def fake_factory(provider_name, settings=None):
+            if provider_name == "llm":
+                return FailingProvider()
+            return FallbackProvider()
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            bot = MeetBot.__new__(MeetBot)
+            bot.settings = SimpleNamespace(
+                meeting_intelligence_enabled=True,
+                meeting_intelligence_provider="llm",
+                meeting_llm_fallback_provider="rule_based",
+            )
+            bot.storage = MeetingStorage(tmpdir)
+            meeting_dir = bot.storage.create_meeting_dir("Fallback")
+
+            with patch("meet_bot.create_meeting_intelligence_provider", fake_factory), patch(
+                "meet_bot.LOGGER.exception"
+            ):
+                updates = bot._generate_meeting_intelligence(meeting_dir, [], {"title": "Fallback"})
+
+            self.assertEqual(updates["meeting_intelligence_status"], "completed_with_fallback")
+            result = json.loads((meeting_dir / "meeting_intelligence.json").read_text())
+            self.assertEqual(result["provider"], "rule_based")
+            self.assertEqual(result["fallback_reason"], "llm unavailable")
+
+    def test_send_summary_email_delegates_to_delivery_module(self):
+        bot = MeetBot.__new__(MeetBot)
+        bot.settings = SimpleNamespace(summary_email_enabled=True)
+
+        with patch("meet_bot.send_summary_email_for_meeting", return_value={"summary_email_status": "sent"}) as send:
+            updates = bot._send_summary_email("/tmp/meeting", {"title": "Product Sync"})
+
+        self.assertEqual(updates["summary_email_status"], "sent")
+        send.assert_called_once_with("/tmp/meeting", {"title": "Product Sync"}, settings=bot.settings)
+
 
 class FakeElement:
-    def __init__(self):
+    def __init__(
+        self,
+        text="",
+        attrs=None,
+        children_by_selector=None,
+        display_error=False,
+        enabled_error=False,
+    ):
         self.cleared = False
         self.clicked = False
         self.typed_text = ""
+        self.text = text
+        self.attrs = attrs or {}
+        self.children_by_selector = children_by_selector or {}
+        self.display_error = display_error
+        self.enabled_error = enabled_error
 
     def is_displayed(self):
+        if self.display_error:
+            raise RuntimeError("stale element")
         return True
 
     def is_enabled(self):
+        if self.enabled_error:
+            raise RuntimeError("stale element")
         return True
 
     def clear(self):
@@ -190,6 +469,14 @@ class FakeElement:
 
     def send_keys(self, text):
         self.typed_text += text
+
+    def find_elements(self, strategy, selector):
+        return self.children_by_selector.get(selector, [])
+
+    def get_attribute(self, name):
+        if name == "textContent":
+            return self.text
+        return self.attrs.get(name)
 
 
 class FakeDriver:
@@ -206,3 +493,6 @@ class FakeDriver:
 
     def execute_script(self, script):
         return self.visible_text
+
+    def get(self, url):
+        self.current_url = url

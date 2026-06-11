@@ -33,6 +33,18 @@ def _int_env(name: str) -> int | None:
     return int(value)
 
 
+def _float_env(name: str, default: float) -> float:
+    value = os.getenv(name)
+    if not value:
+        return default
+    return float(value)
+
+
+def _list_env(name: str) -> list[str]:
+    value = os.getenv(name, "")
+    return [item.strip() for item in value.split(",") if item.strip()]
+
+
 @dataclass(frozen=True)
 class Settings:
     google_credentials_path: Path
@@ -49,8 +61,6 @@ class Settings:
     delete_chunks_after_concat: bool
     seen_meetings_path: Path
     bot_session_path: Path
-    audio_backend: str
-    audio_input_device: str | None
     audio_samplerate: int
     audio_channels: int
     audio_chunk_seconds: int
@@ -61,6 +71,30 @@ class Settings:
     chrome_headless: bool
     skip_google_login: bool
     treat_removal_as_meeting_end: bool
+    meeting_intelligence_enabled: bool
+    meeting_intelligence_provider: str
+    meeting_llm_provider: str
+    meeting_llm_base_url: str
+    meeting_llm_api_key: str
+    meeting_llm_model: str
+    meeting_llm_temperature: float
+    meeting_llm_timeout_seconds: int
+    meeting_llm_max_input_chars: int
+    meeting_llm_response_format: str
+    meeting_llm_reasoning_effort: str | None
+    meeting_llm_fallback_provider: str
+    meet_dialog_llm_enabled: bool
+    summary_email_enabled: bool
+    smtp_host: str
+    smtp_port: int
+    smtp_username: str
+    smtp_password: str
+    smtp_from: str
+    smtp_summary_recipients: list[str]
+    smtp_use_tls: bool
+    smtp_use_ssl: bool
+    smtp_timeout_seconds: int
+    smtp_subject_prefix: str
 
 
 def get_settings(env_path: str | Path = ".env") -> Settings:
@@ -81,8 +115,6 @@ def get_settings(env_path: str | Path = ".env") -> Settings:
         delete_chunks_after_concat=_bool_env("DELETE_CHUNKS_AFTER_CONCAT", True),
         seen_meetings_path=Path(os.getenv("SEEN_MEETINGS_PATH", "./seen_meetings.json")),
         bot_session_path=Path(os.getenv("BOT_SESSION_PATH", "./bot_session.pkl")),
-        audio_backend=os.getenv("AUDIO_BACKEND", "auto").lower(),
-        audio_input_device=os.getenv("AUDIO_INPUT_DEVICE") or None,
         audio_samplerate=int(os.getenv("AUDIO_SAMPLERATE", "44100")),
         audio_channels=int(os.getenv("AUDIO_CHANNELS", "2")),
         audio_chunk_seconds=int(os.getenv("AUDIO_CHUNK_SECONDS", "60")),
@@ -93,6 +125,30 @@ def get_settings(env_path: str | Path = ".env") -> Settings:
         chrome_headless=_bool_env("CHROME_HEADLESS", False),
         skip_google_login=_bool_env("SKIP_GOOGLE_LOGIN", False),
         treat_removal_as_meeting_end=_bool_env("TREAT_REMOVAL_AS_MEETING_END", True),
+        meeting_intelligence_enabled=_bool_env("MEETING_INTELLIGENCE_ENABLED", True),
+        meeting_intelligence_provider=os.getenv("MEETING_INTELLIGENCE_PROVIDER", "rule_based"),
+        meeting_llm_provider=os.getenv("MEETING_LLM_PROVIDER", "openai_compatible"),
+        meeting_llm_base_url=os.getenv("MEETING_LLM_BASE_URL", "http://localhost:11434/v1"),
+        meeting_llm_api_key=os.getenv("MEETING_LLM_API_KEY", ""),
+        meeting_llm_model=os.getenv("MEETING_LLM_MODEL", "llama3.1"),
+        meeting_llm_temperature=_float_env("MEETING_LLM_TEMPERATURE", 0.2),
+        meeting_llm_timeout_seconds=int(os.getenv("MEETING_LLM_TIMEOUT_SECONDS", "120")),
+        meeting_llm_max_input_chars=int(os.getenv("MEETING_LLM_MAX_INPUT_CHARS", "60000")),
+        meeting_llm_response_format=os.getenv("MEETING_LLM_RESPONSE_FORMAT", "json_schema"),
+        meeting_llm_reasoning_effort=os.getenv("MEETING_LLM_REASONING_EFFORT") or None,
+        meeting_llm_fallback_provider=os.getenv("MEETING_LLM_FALLBACK_PROVIDER", "rule_based"),
+        meet_dialog_llm_enabled=_bool_env("MEET_DIALOG_LLM_ENABLED", True),
+        summary_email_enabled=_bool_env("SUMMARY_EMAIL_ENABLED", False),
+        smtp_host=os.getenv("SMTP_HOST", ""),
+        smtp_port=int(os.getenv("SMTP_PORT", "587")),
+        smtp_username=os.getenv("SMTP_USERNAME", ""),
+        smtp_password=os.getenv("SMTP_PASSWORD", ""),
+        smtp_from=os.getenv("SMTP_FROM", ""),
+        smtp_summary_recipients=_list_env("SMTP_SUMMARY_RECIPIENTS"),
+        smtp_use_tls=_bool_env("SMTP_USE_TLS", True),
+        smtp_use_ssl=_bool_env("SMTP_USE_SSL", False),
+        smtp_timeout_seconds=int(os.getenv("SMTP_TIMEOUT_SECONDS", "30")),
+        smtp_subject_prefix=os.getenv("SMTP_SUBJECT_PREFIX", "[MeetRead]"),
     )
 
 

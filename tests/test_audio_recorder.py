@@ -7,15 +7,16 @@ import unittest
 from unittest.mock import patch
 
 import audio_recorder as module
-from audio_recorder import AudioRecorder
+from audio_recorder import AudioRecorder, _max_sample_peak
 
 
-def _write_wav(path: Path) -> None:
+def _write_wav(path: Path, sample: int = 1000) -> None:
+    frame = int(sample).to_bytes(2, "little", signed=True)
     with wave.open(str(path), "wb") as wav:
         wav.setnchannels(2)
         wav.setsampwidth(2)
         wav.setframerate(44100)
-        wav.writeframes(b"\x00\x00" * 100)
+        wav.writeframes(frame * 200)
 
 
 class AudioRecorderTests(unittest.TestCase):
@@ -49,9 +50,30 @@ class AudioRecorderTests(unittest.TestCase):
 
             self.assertFalse(AudioRecorder()._chunk_has_audio(chunk))
 
-    def test_wav_chunk_with_frames_is_counted_as_audio(self):
+    def test_silent_wav_chunk_is_not_counted_as_audio(self):
+        with TemporaryDirectory() as tmp:
+            chunk = Path(tmp) / "chunk.wav"
+            _write_wav(chunk, sample=0)
+
+            self.assertFalse(AudioRecorder()._chunk_has_audio(chunk))
+
+    def test_wav_chunk_with_signal_is_counted_as_audio(self):
         with TemporaryDirectory() as tmp:
             chunk = Path(tmp) / "chunk.wav"
             _write_wav(chunk)
 
             self.assertTrue(AudioRecorder()._chunk_has_audio(chunk))
+
+    def test_max_sample_peak_handles_unsigned_8_bit_audio(self):
+        self.assertEqual(_max_sample_peak(bytes([128, 128]), 1), 0)
+        self.assertGreaterEqual(_max_sample_peak(bytes([128, 255]), 1), module.MIN_AUDIO_PEAK)
+
+    def test_max_sample_peak_handles_signed_32_bit_audio(self):
+        silent = (0).to_bytes(4, "little", signed=True) * 2
+        signal = (10_000_000).to_bytes(4, "little", signed=True) * 2
+
+        self.assertEqual(_max_sample_peak(silent, 4), 0)
+        self.assertGreaterEqual(_max_sample_peak(signal, 4), module.MIN_AUDIO_PEAK)
+
+    def test_max_sample_peak_returns_zero_for_unsupported_sample_width(self):
+        self.assertEqual(_max_sample_peak(b"\xff\xff", 5), 0)

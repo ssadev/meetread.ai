@@ -8,6 +8,9 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Callable
 
+from google.auth.exceptions import TransportError
+from httplib2 import HttpLib2Error
+
 from config import SETTINGS, Settings
 
 
@@ -67,6 +70,12 @@ class CalendarWatcher:
             try:
                 for meeting in self.poll_once():
                     on_meeting(meeting)
+            except (TransportError, HttpLib2Error, OSError) as exc:
+                LOGGER.warning(
+                    "Calendar polling failed (network error); retrying in %ds: %s",
+                    self.settings.poll_interval_seconds,
+                    exc,
+                )
             except Exception:
                 LOGGER.exception("Calendar polling failed; retrying on next interval")
             stop_event.wait(self.settings.poll_interval_seconds)

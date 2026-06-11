@@ -1,21 +1,58 @@
-# Google Meet Bot
+# MeetRead
 
-Python 3.11 meeting bot that joins Google Meet calls, records routed system audio, and scrapes Google Meet live captions in parallel. It does not run Whisper, speech-to-text, or ML transcription. The transcript comes only from Meet captions.
+MeetRead is an open-source, self-hosted Google Meet capture and meeting intelligence platform. The long-term goal is to provide an alternative to hosted meeting assistants such as Read.ai and Fireflies for individuals and organizations that need meeting capture, transcripts, summaries, and action items without sending their meeting data outside their own infrastructure.
+
+Today, MeetRead is a Python 3.11 meeting bot that joins Google Meet calls, records routed system audio, and scrapes Google Meet live captions in parallel. It can generate local and LLM-backed meeting intelligence and send optional summary emails. The current transcript source is Google Meet captions; it does not run Whisper, speech-to-text, or ML transcription by default.
+
+## Product Objective
+
+MeetRead is being built toward a full-fledged open-source meeting capture product with these priorities:
+
+- Keep meeting artifacts under the user's control: audio, transcripts, summaries, logs, credentials, and integration data should stay on infrastructure the user or organization owns.
+- Capture Google Meet reliably: join scheduled calls, record audio, collect captions/transcripts, detect meeting lifecycle states, and preserve durable per-meeting artifacts.
+- Provide privacy-preserving meeting intelligence: local deterministic summaries by default, optional self-hosted or user-configured LLM providers, and clear fallbacks when AI providers fail.
+- Support both individuals and organizations: local setup for personal use, plus future team/workspace concepts, permissions, audit logs, retention controls, and deployment options.
+- Become a practical open-source replacement for hosted meeting assistants: dashboard, searchable transcripts, synced playback, editable summaries, action items, integrations, APIs, and production operations.
+
+The product roadmap and TODO list live in [ROADMAP.md](ROADMAP.md).
+
+## Current Scope
+
+The current implementation focuses on capture and post-meeting artifacts:
+
+- Calendar polling for upcoming Google Meet events.
+- Manual meeting join by URL with optional background mode (no calendar required).
+- Automated Meet join flow using a dedicated bot Google account.
+- Lobby admission detection with configurable wait timeout.
+- Routed system audio recording on Docker/Linux and macOS.
+- Live caption scraping from the Google Meet browser DOM.
+- Per-meeting output folders with metadata, logs, audio, transcripts, and intelligence artifacts.
+- Rule-based local meeting intelligence with optional LLM providers (OpenAI-compatible, Sarvam AI).
+- Optional SMTP summary email delivery with manual resend support.
+
+This is not yet a complete Read.ai/Fireflies-class product. The roadmap tracks the remaining product, reliability, security, integration, and operations work needed to get there.
 
 ## Layout
 
 ```text
-google-meet-bot/
-  main.py
-  calendar_watcher.py
-  meet_bot.py
-  audio_recorder.py
-  caption_scraper.py
-  storage.py
-  config.py
-  auth.py
+meetread.ai/
+  main.py               # calendar-driven daemon
+  join_meeting.py       # manual join by URL (no calendar needed)
+  meet_bot.py           # core browser automation and meeting lifecycle
+  calendar_watcher.py   # Google Calendar polling
+  audio_recorder.py     # PulseAudio/sounddevice capture
+  caption_scraper.py    # Google Meet DOM caption scraping
+  meeting_intelligence.py  # rule-based and LLM intelligence providers
+  email_delivery.py     # SMTP summary email delivery
+  storage.py            # per-meeting artifact filesystem layout
+  config.py             # settings dataclass, env loading
+  auth.py               # Google OAuth flow
+  list_audio_devices.py # utility to enumerate audio devices
   requirements.txt
   .env.example
+  .env.docker.example
+  Dockerfile
+  docker-compose.yml
   tests/
 ```
 
@@ -130,6 +167,8 @@ This creates `token.json`.
 
 ## Running
 
+### Calendar daemon
+
 ```bash
 python main.py
 ```
@@ -145,6 +184,30 @@ Before requesting entry, the bot blocks Chrome camera/microphone permissions, tu
 
 If Google Meet shows that the bot was removed from the meeting, the bot treats that as meeting end and finalizes recording/transcripts by default. Set `TREAT_REMOVAL_AS_MEETING_END=false` to disable that behavior.
 
+The bot waits up to `LOBBY_WAIT_MINUTES` for a host to admit it from the Meet lobby before treating the join as failed.
+
+### Manual join (no calendar required)
+
+```bash
+python join_meeting.py "https://meet.google.com/abc-defg-hij"
+python join_meeting.py "https://meet.google.com/abc-defg-hij" --title "Weekly Sync"
+python join_meeting.py "https://meet.google.com/abc-defg-hij" --duration-hours 2
+python join_meeting.py "https://meet.google.com/abc-defg-hij" --end-time "2026-05-27T15:00:00+05:30"
+```
+
+To detach from the terminal and run the bot in the background:
+
+```bash
+python join_meeting.py "https://meet.google.com/abc-defg-hij" --background
+# Prints PID and log path, then exits. Bot keeps running.
+```
+
+Inside a running Docker container:
+
+```bash
+docker exec <container> python join_meeting.py "https://meet.google.com/abc-defg-hij" --background
+```
+
 ## Output
 
 Each meeting writes to:
@@ -157,14 +220,88 @@ meetings/{YYYY-MM-DD}_{sanitized_meeting_title}/
   transcript_live.json
   transcript_final.json
   transcript_final.txt
+  meeting_intelligence.json
+  meeting_intelligence.md
   bot.log
 ```
 
-Audio chunks are written to `audio_chunks/` while recording. After ffmpeg concatenates them successfully, the chunks folder is deleted when `DELETE_CHUNKS_AFTER_CONCAT=true`.
+Audio chunks are written to `audio_chunks/` while recording. Silent chunks are discarded and counted in `metadata.json` as `audio_silent_chunks`. After ffmpeg concatenates chunks with real signal successfully, the chunks folder is deleted when `DELETE_CHUNKS_AFTER_CONCAT=true`.
+
+Meeting intelligence runs after transcript finalization when `MEETING_INTELLIGENCE_ENABLED=true`. The current provider is `rule_based`, which creates deterministic local summaries, key points, decisions, risks, questions, blockers, topics, and action items without sending transcript data to an external service. The provider is selected with:
+
+```env
+MEETING_INTELLIGENCE_PROVIDER=rule_based
+```
+
+For AI-generated intelligence, enable the LLM provider:
+
+```env
+MEETING_INTELLIGENCE_PROVIDER=llm
+MEETING_LLM_PROVIDER=openai_compatible
+MEETING_LLM_BASE_URL=http://localhost:11434/v1
+MEETING_LLM_MODEL=llama3.1
+MEETING_LLM_API_KEY=
+MEETING_LLM_TEMPERATURE=0.2
+MEETING_LLM_TIMEOUT_SECONDS=120
+MEETING_LLM_MAX_INPUT_CHARS=60000
+MEETING_LLM_RESPONSE_FORMAT=json_schema
+MEETING_LLM_FALLBACK_PROVIDER=rule_based
+MEET_DIALOG_LLM_ENABLED=true
+```
+
+The `openai_compatible` LLM provider posts to `/chat/completions` and works with Ollama, LM Studio, vLLM, OpenAI, or any OpenAI-compatible gateway. `MEETING_LLM_API_KEY` can be empty for local providers. `MEETING_LLM_RESPONSE_FORMAT` defaults to `json_schema`; use `text` for gateways that do not support structured output, `json_object` for older servers, or `none` to omit the field. `MEETING_LLM_MAX_INPUT_CHARS` controls how much transcript text is sent per request; long transcripts are chunked automatically and results merged. If the LLM request fails or returns invalid JSON, `MEETING_LLM_FALLBACK_PROVIDER=rule_based` lets meeting finalization still produce local intelligence artifacts.
+
+When `MEETING_INTELLIGENCE_PROVIDER=llm` and `MEET_DIALOG_LLM_ENABLED=true`, MeetRead can use the same LLM provider to classify unknown Google Meet or plugin dialogs that block joining. Only visible dialog text and button labels are sent. Known-safe sharing prompts are handled locally first; unknown, low-confidence, or destructive prompts are not clicked and are recorded in `metadata.json` as join blocker diagnostics.
+
+**Sarvam AI** is also supported as an LLM provider:
+
+```env
+MEETING_INTELLIGENCE_PROVIDER=llm
+MEETING_LLM_PROVIDER=sarvam
+MEETING_LLM_BASE_URL=https://api.sarvam.ai/v1
+MEETING_LLM_MODEL=sarvam-105b
+MEETING_LLM_API_KEY=your-sarvam-api-key
+MEETING_LLM_RESPONSE_FORMAT=json_object
+MEETING_LLM_REASONING_EFFORT=high
+MEETING_LLM_FALLBACK_PROVIDER=rule_based
+```
+
+`MEETING_LLM_REASONING_EFFORT` is optional and passed to providers that support it (e.g. `low`, `medium`, `high` on Sarvam).
+
+To regenerate intelligence for an existing meeting folder after improving the analyzer:
+
+```bash
+python3 -m meeting_intelligence meetings/2026-05-26_245pm
+```
+
+The rule-based provider normalizes repeated incremental Meet captions before analysis and records `raw_total_lines`, `normalized_segment_count`, and `normalization_applied` in `meeting_intelligence.json`.
+
+Summary email delivery runs after meeting finalization when `SUMMARY_EMAIL_ENABLED=true`. It sends a concise inline summary to `SMTP_SUMMARY_RECIPIENTS`; it does not email calendar attendees automatically and does not attach large files by default.
+
+```env
+SUMMARY_EMAIL_ENABLED=true
+SMTP_HOST=smtp.example.com
+SMTP_PORT=587
+SMTP_USERNAME=bot@example.com
+SMTP_PASSWORD=app-password
+SMTP_FROM=MeetRead <bot@example.com>
+SMTP_SUMMARY_RECIPIENTS=alice@example.com,bob@example.com
+SMTP_USE_TLS=true
+SMTP_USE_SSL=false
+SMTP_SUBJECT_PREFIX=[MeetRead]
+```
+
+Email delivery status is recorded in `metadata.json` as `summary_email_status`, `summary_email_sent_at`, `summary_email_recipients`, and `summary_email_error` when applicable. SMTP failures do not change the meeting capture status. To resend a summary for an existing meeting:
+
+```bash
+python3 -m email_delivery meetings/2026-05-26_615pm
+```
 
 ## Audio Routing
 
-On Linux, the bot creates the PulseAudio sink before launching Chrome:
+`AUDIO_BACKEND` defaults to `auto`, which selects `pulseaudio` on Linux and `sounddevice` on macOS.
+
+On Linux (or Docker), the bot creates a per-meeting PulseAudio null sink before launching Chrome:
 
 ```bash
 pactl load-module module-null-sink sink_name=MeetBot_xxx
@@ -172,9 +309,20 @@ pactl set-default-sink MeetBot_xxx
 pactl set-default-source MeetBot_xxx.monitor
 ```
 
-Chrome is started with `--alsa-output-device=pulse`, so meeting audio goes to the virtual sink and `sounddevice` records from `MeetBot_xxx.monitor`.
+Chrome routes Meet audio into that virtual sink, and `sounddevice` records from `MeetBot_xxx.monitor`.
 
-On macOS, set `AUDIO_BACKEND=sounddevice` and `AUDIO_INPUT_DEVICE=BlackHole 2ch`. The app does not call `pactl` and does not start a virtual display on macOS.
+On macOS, the bot does not call `pactl` and does not start a virtual display. Set:
+
+```env
+AUDIO_BACKEND=sounddevice
+AUDIO_INPUT_DEVICE=BlackHole 2ch
+```
+
+To enumerate available input device names:
+
+```bash
+python list_audio_devices.py
+```
 
 ## Google Account Notes
 
@@ -196,81 +344,13 @@ Then run Chrome once with that profile and sign in manually:
 
 After the bot account is signed in, close that Chrome window and run `python main.py`. The bot will reuse the signed-in session and skip automated password entry. If automated sign-in gets stuck, the meeting folder will contain `google_signin_no_password.html` and `google_signin_no_password.png` for diagnosis.
 
-## Product Roadmap / TODO
+## Roadmap
 
-The project currently captures Google Meet audio and Meet-provided captions. To move closer to a Read.ai or Fireflies-style product replacement, the next improvements should focus on reliability, transcript quality, intelligence, collaboration workflows, and product operations.
+The product roadmap and TODO list live in [ROADMAP.md](ROADMAP.md). Future work should preserve the core project direction: open-source, self-hosted, privacy-conscious meeting capture and intelligence for Google Meet.
 
-### Capture Reliability
+## Code Agent Context
 
-- [ ] Add a meeting state machine with explicit states such as `scheduled`, `joining`, `waiting_for_admission`, `recording`, `removed`, `ended`, `failed`, and `partial`.
-- [ ] Improve join diagnostics with structured screenshots, HTML snapshots, current URL, visible page text, and detected Meet state.
-- [ ] Add automatic recovery when caption DOM selectors change, including selector telemetry in `bot.log`.
-- [ ] Detect silent audio during recording and mark the meeting as `partial` if the audio stream is blank for too long.
-- [ ] Add configurable retry rules for temporary ChromeDriver, PulseAudio, or network failures.
-- [ ] Support concurrent meetings safely with isolated browser profiles, PulseAudio sinks, output folders, and logs.
-
-### Transcript Quality
-
-- [ ] Add optional Whisper or another speech-to-text backend as a fallback when Google Meet captions are disabled or unreliable.
-- [ ] Merge Meet captions and audio transcription into a single best transcript with timestamps and confidence metadata.
-- [ ] Improve speaker detection with participant roster scraping, caption speaker parsing, and optional voice diarization.
-- [ ] Add transcript cleanup to remove repeated incremental captions without losing live transcript updates.
-- [ ] Add punctuation, casing, paragraphing, and sentence boundary cleanup for final transcripts.
-- [ ] Add transcript search and filtering by speaker, timestamp, or keyword.
-
-### Meeting Intelligence
-
-- [ ] Generate an automatic meeting summary with key points, decisions, risks, and follow-ups.
-- [ ] Extract action items with owner, due date, source timestamp, and confidence.
-- [ ] Detect questions, blockers, objections, and unresolved topics.
-- [ ] Add topic segmentation so long meetings are grouped into readable sections.
-- [ ] Add meeting highlights with links back to audio/transcript timestamps.
-- [ ] Add configurable summary templates for sales calls, standups, interviews, support calls, and product meetings.
-
-### Integrations
-
-- [ ] Push summaries and action items to Slack, email, Notion, Confluence, Linear, Jira, or HubSpot.
-- [ ] Create calendar event follow-up notes automatically after the meeting ends.
-- [ ] Add webhook events for `meeting_started`, `meeting_completed`, `meeting_failed`, and `summary_ready`.
-- [ ] Store artifacts in S3, GCS, or another object store instead of only the local filesystem.
-- [ ] Add a REST API to query meetings, transcripts, summaries, and recordings.
-- [ ] Add user/team-level settings for retention, sharing, summary format, and integration targets.
-
-### Product Experience
-
-- [ ] Build a web dashboard to browse meetings, recordings, transcripts, summaries, and action items.
-- [ ] Add playback with transcript syncing and click-to-seek timestamps.
-- [ ] Add editable transcripts and human correction workflow.
-- [ ] Add shareable meeting pages with permissions.
-- [ ] Add organization, workspace, and team concepts.
-- [ ] Add notification preferences for meeting completion and summary delivery.
-
-### Security, Privacy, And Compliance
-
-- [ ] Add explicit retention settings for audio, transcripts, logs, and screenshots.
-- [ ] Add encryption-at-rest support for sensitive artifacts.
-- [ ] Redact secrets, personal data, and sensitive keywords from logs.
-- [ ] Add role-based access control for meeting artifacts.
-- [ ] Add audit logs for who accessed, edited, exported, or deleted meeting data.
-- [ ] Add consent and disclosure controls so meeting participants know the bot is recording.
-
-### Operations And Scale
-
-- [ ] Add structured JSON logs and metrics for join success rate, caption health, audio health, and processing time.
-- [ ] Add health checks for Chrome, PulseAudio, Calendar API, storage, and worker queues.
-- [ ] Move long-running post-processing into a job queue.
-- [ ] Add database storage for meetings, artifacts, speaker metadata, summaries, and integration status.
-- [ ] Add alerts for repeated join failures, blank recordings, missing transcripts, or expired credentials.
-- [ ] Add deployment docs for Docker Compose, Kubernetes, and systemd production setups.
-
-### Evaluation And Quality
-
-- [ ] Create fixture-based tests using saved Meet DOM samples for caption parsing.
-- [ ] Add audio validation tests that distinguish silence from real speech.
-- [ ] Add golden-file tests for transcript cleanup and summary generation.
-- [ ] Track transcript word error rate when using an STT backend.
-- [ ] Track summary quality with human review fields and regression examples.
-- [ ] Add end-to-end test meetings in a controlled Google Workspace test account.
+Coding agents should read [AGENTS.md](AGENTS.md) before making changes. It summarizes the project objective, architecture, privacy rules, local setup, verification commands, and module map for future development.
 
 ## systemd Example
 
